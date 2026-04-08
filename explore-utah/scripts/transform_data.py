@@ -30,16 +30,18 @@ def simplify_geojson(data, precision=5):
 def transform_all():
     results = []
 
-    # 1. Federal Lands — simplify coordinates (74MB Land_Ownership → 23MB → smaller)
-    print("1. Federal Lands (Land_Ownership.geojson)")
+    # 1. Federal Lands -- filter to owner='Federal' only, simplify coords
+    print("1. Federal Lands (Land_Ownership.geojson -> Federal only)")
     src = os.path.join(RAW, 'Parks and Monuments', 'Land_Ownership.geojson')
     dst = os.path.join(OUT, 'federal_lands.geojson')
     d = json.load(open(src, 'r', encoding='utf-8'))
-    print(f"   Source: {len(d['features'])} features")
+    print(f"   Source: {len(d['features'])} features (all owners)")
+    d['features'] = [f for f in d['features'] if f['properties'].get('owner') == 'Federal']
+    print(f"   After filter: {len(d['features'])} federal features")
     d = simplify_geojson(d, precision=4)
     json.dump(d, open(dst, 'w'), separators=(',', ':'))
     sz = os.path.getsize(dst) / 1024 / 1024
-    results.append(f"federal_lands.geojson: {sz:.1f} MB ({len(d['features'])} features, precision=4)")
+    results.append(f"federal_lands.geojson: {sz:.1f} MB ({len(d['features'])} features, owner=Federal, precision=4)")
     print(f"   Output: {sz:.1f} MB")
 
     # 2. Population Density — strip geometry precision + compute density

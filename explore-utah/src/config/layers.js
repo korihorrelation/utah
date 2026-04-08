@@ -80,9 +80,9 @@ export const CATEGORIES = {
             sublayerGroup: 'other-federal',
             filter: ['!', ['in', ['get', 'desig'], ['literal', ['National Park', 'National Forest']]]],
             paint: {
-              'line-color': '#9CA3AF',
+              'line-color': ['match', ['get', 'desig'], 'National Monument', '#F97316', '#9CA3AF'],
               'line-width': 1,
-              'line-opacity': 0.3,
+              'line-opacity': 0.35,
             },
           },
         ],

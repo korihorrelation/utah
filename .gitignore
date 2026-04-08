@@ -1,0 +1,4 @@
+# Raw source data — too large for git (886MB roads, etc.)
+# The app uses optimized copies in explore-utah/public/data/
+# To regenerate, run: python explore-utah/scripts/transform_data.py
+data/

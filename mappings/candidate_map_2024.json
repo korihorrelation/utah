@@ -1,0 +1,37 @@
+{
+  "_comment_president_writeins": "Write-ins skipped: RDDH itemizes into G24PRENSON/G24PRENBOW/etc, OE lumps as Write-In",
+  "President-Donald J. TRUMP / JD VANCE":               "G24PRERTRU",
+  "President-Kamala D. HARRIS / Tim WALZ":              "G24PREDHAR",
+  "President-Chase OLIVER / Mike ter MAAT":             "G24PRELOLI",
+  "President-Joel SKOUSEN // Rik COMBS":                "G24PRECSKO",
+  "President-Jill STEIN / Rudolph WARE":                "G24PREGSTE",
+  "President-Claudia de la CRUZ / Alexandra GARCIA":    "G24PRENDEL",
+  "President-Lucifer \"Justine Case\" EVERYLOVE":         "G24PRENEVE",
+  "President-Cornel Ronald WEST / Melina ABDULLAH":     "G24PRENWES",
+
+  "_comment_senate_writeins": "Write-ins skipped: RDDH has G24USSNHAM, OE lumps as Write-In",
+  "U.S. Senate-John CURTIS":                            "G24USSRCUR",
+  "U.S. Senate-Caroline GLEICH":                        "G24USSDGLE",
+  "U.S. Senate-Carlton E. BOWEN":                       "G24USSIBOW",
+
+  "_comment_governor_writeins": "Write-ins skipped: RDDH has Phil Lyman (G24GOVNCLA) + Charlie Tautuaa (G24GOVNFIS), OE lumps as Write-In",
+  "Governor-Spencer J. COX / Deidre M. HENDERSON":      "G24GOVRHEN",
+  "Governor-Brian SMITH KING / Rebekah CUMMINGS":       "G24GOVDCUM",
+  "Governor-J. Robert LATHAM / Barry Evan SHORT":       "G24GOVLSHO",
+  "Governor-Tommy WILLIAMS / Archie A. WILLIAMS III":   "G24GOVIWIL",
+  "Governor-Tom TOMENY / William LANSING TAYLOR":       "G24GOVNTAY",
+
+  "Attorney General-Derek BROWN":                       "G24ATGRBRO",
+  "Attorney General-Rudy J BAUTISTA":                   "G24ATGDBAU",
+  "Attorney General-Michelle QUIST":                    "G24ATGUQUI",
+  "Attorney General-Andrew McCULLOUGH":                 "G24ATGLMCC",
+  "Attorney General-Austin HEPWORTH":                   "G24ATGNHEP",
+
+  "State Auditor-Tina CANNON":                          "G24AUDRCAN",
+  "State Auditor-Catherine VOUTAZ":                     "G24AUDDVOU",
+  "State Auditor-Jeffrey L. OSTLER":                    "G24AUDCOST",
+
+  "State Treasurer-Marlo M. Oaks":                      "G24TREROAK",
+  "State Treasurer-Neil A HANSEN":                      "G24TREDHAN",
+  "State Treasurer-Miles POMEROY":                      "G24TREFPOM"
+}

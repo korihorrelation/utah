@@ -1,0 +1,30 @@
+{
+  "President-Donald Trump":                              "G16PRERTRU",
+  "President-Hillary Clinton":                           "G16PREDCLI",
+  "President-Gary Johnson":                              "G16PRELJOH",
+  "President-Jill Stein":                                "G16PREISTE",
+  "President-Evan McMullin":                             "G16PREIMCM",
+
+  "U.S. Senate-Mike Lee":                                "G16USSRLEE",
+  "U.S. Senate-Misty Snow":                              "G16USSDSNO",
+  "U.S. Senate-Stoney Fonua":                            "G16USSAFON",
+  "U.S. Senate-Bill Barron":                             "G16USSIBAR",
+
+  "Governor-Gary Herbert":                               "G16GOVRHER",
+  "Governor-Mike Weinholtz":                             "G16GOVDWEI",
+  "Governor-Brian Kamerath":                             "G16GOVLKAM",
+  "Governor-Dell Schanze":                               "G16GOVASCH",
+
+  "Attorney General-Sean Reyes":                         "G16ATGRREY",
+  "Attorney General-Jon Harper":                         "G16ATGDHAR",
+  "Attorney General-W. Andrew McCullough":               "G16ATGLMCC",
+  "Attorney General-Michael Isbell":                     "G16ATGAISB",
+
+  "State Auditor-John Dougall":                          "G16AUDRDOU",
+  "State Auditor-Mike Mitchell":                         "G16AUDDMIT",
+  "State Auditor-Jared Green":                           "G16AUDAGRE",
+
+  "State Treasurer-David Damschen":                      "G16TRERDAM",
+  "State Treasurer-Neil Hansen":                         "G16TREDHAN",
+  "State Treasurer-Richard Proctor":                     "G16TRECPRO"
+}

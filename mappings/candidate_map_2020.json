@@ -1,0 +1,30 @@
+{
+  "President-DONALD J. TRUMP":                           "G20PRERTRU",
+  "President-JOSEPH R. BIDEN":                           "G20PREDBID",
+  "President-JO JORGENSEN":                              "G20PRELJOR",
+  "President-HOWIE HAWKINS":                             "G20PREGHAW",
+  "President-DON BLANKENSHIP":                           "G20PRECBLA",
+  "President-BROCK PIERCE":                              "G20PREIPIE",
+  "President-KANYE WEST / MICHELLE TIDBALL":             "G20PREIWES",
+  "President-JOE MCHUGH / ELIZABETH STORM":              "G20PREIMCH",
+  "President-GLORIA LA RIVA":                            "G20PREILAR",
+  "President-WRITE-IN TOTALS":                           "G20PREOWRI",
+
+  "Governor-SPENCER J. COX":                             "G20GOVRCOX",
+  "Governor-CHRIS PETERSON":                             "G20GOVDPET",
+  "Governor-DANIEL RHEAD COTTAM":                        "G20GOVLCOT",
+  "Governor-GREG DUERDEN":                               "G20GOVADUE",
+  "Governor-WRITE-IN TOTALS":                            "G20GOVOWRI",
+
+  "Attorney General-SEAN D. REYES":                      "G20ATGRREY",
+  "Attorney General-GREG SKORDAS":                       "G20ATGDSKO",
+  "Attorney General-RUDY J. BAUTISTA":                   "G20ATGLBAU",
+
+  "State Auditor-JOHN 'FRUGAL' DOUGALL":                 "G20AUDRDOU",
+  "State Auditor-JEFFREY L. OSTLER":                     "G20AUDCOST",
+  "State Auditor-BRIAN L. FABBI":                        "G20AUDUFAB",
+
+  "State Treasurer-DAVID DAMSCHEN":                      "G20TRERDAM",
+  "State Treasurer-JOSEPH SPECIALE":                     "G20TRELSPE",
+  "State Treasurer-RICHARD PROCTOR":                     "G20TRECPRO"
+}

@@ -1,0 +1,6 @@
+node_modules/
+.next/
+.tmp-shapefile/
+public/data/utah-votes.geojson
+npm-debug.log*
+yarn-error.log*

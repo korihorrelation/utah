@@ -1,0 +1,146 @@
+'use client';
+
+import { useState } from 'react';
+import dynamic from 'next/dynamic';
+import { useHierarchy } from './hooks/useHierarchy';
+import BreadcrumbBar from './components/BreadcrumbBar';
+import HierarchyTree from './components/HierarchyTree';
+import DetailPanel from './components/DetailPanel';
+import SearchBar from './components/SearchBar';
+
+// Dynamic import of MapView to disable SSR (Leaflet requires window)
+const MapView = dynamic(() => import('./components/MapView'), {
+  ssr: false,
+  loading: () => (
+    <div className="map-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="loading-spinner" />
+    </div>
+  ),
+});
+
+export default function HomePage() {
+  const {
+    hierarchy,
+    subdivisions,
+    cityBoundary,
+    roads,
+    paths,
+    parks,
+    pois,
+    activeTile,
+    activeSubdivisionId,
+    selection,
+    drillPath,
+    loading,
+    tileLoading,
+    searchQuery,
+    searchResults,
+    expandedNodes,
+    navigateTo,
+    performSearch,
+  } = useHierarchy();
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  if (loading) {
+    return (
+      <div className="app-layout">
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '16px' }}>
+          <div className="loading-spinner" />
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Loading Saratoga Springs GIS data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const handleSearchSelect = (result) => {
+    navigateTo(result.type, result.id, result.name);
+    setSidebarOpen(true);
+  };
+
+  return (
+    <div className="app-layout">
+      {/* Header */}
+      <header className="app-header" id="app-header">
+        <button
+          className="mobile-toggle"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          aria-label="Toggle sidebar"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 12h18M3 6h18M3 18h18" />
+          </svg>
+        </button>
+
+        <div className="app-header__logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+          </svg>
+          <div>
+            <div className="app-header__title">Saratoga Springs GIS Explorer</div>
+            <div className="app-header__subtitle">
+              {hierarchy
+                ? `${hierarchy.subdivisionCount} subdivisions · ${hierarchy.totalParcels?.toLocaleString()} parcels · ${hierarchy.totalAddresses?.toLocaleString()} addresses`
+                : 'Loading...'}
+            </div>
+          </div>
+        </div>
+
+        <div className="app-header__search">
+          <SearchBar
+            onSearch={performSearch}
+            searchResults={searchResults}
+            onSelectResult={handleSearchSelect}
+            searchQuery={searchQuery}
+          />
+        </div>
+      </header>
+
+      {/* Body */}
+      <div className="app-body">
+        {/* Sidebar overlay for mobile */}
+        <div
+          className={`sidebar-overlay ${sidebarOpen ? 'sidebar-overlay--visible' : ''}`}
+          onClick={() => setSidebarOpen(false)}
+        />
+
+        {/* Sidebar */}
+        <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`} id="hierarchy-sidebar">
+          <BreadcrumbBar drillPath={drillPath} onNavigate={navigateTo} />
+          <HierarchyTree
+            hierarchy={hierarchy}
+            selection={selection}
+            expandedNodes={expandedNodes}
+            onNavigate={navigateTo}
+          />
+          <DetailPanel
+            selection={selection}
+            activeTile={activeTile}
+            hierarchy={hierarchy}
+          />
+        </aside>
+
+        {/* Map */}
+        <MapView
+          cityBoundary={cityBoundary}
+          subdivisions={subdivisions}
+          roads={roads}
+          paths={paths}
+          parks={parks}
+          pois={pois}
+          activeTile={activeTile}
+          activeSubdivisionId={activeSubdivisionId}
+          selection={selection}
+          onNavigate={navigateTo}
+        />
+
+        {/* Tile loading indicator */}
+        {tileLoading && (
+          <div className="loading-overlay">
+            <div className="loading-spinner" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

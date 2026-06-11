@@ -17,3 +17,8 @@ raw_data/UtahGNISPlaceNames_-7239962264620892045.zip
 raw_data/UtahLiquorStores_6675403542899368919.zip
 raw_data/UtahRoads_-1477339267615297754.zip
 raw_data/VistaBallotAreas_117520236457726803.zip
+
+# Website
+website/node_modules/
+website/.next/
+website/public/data/

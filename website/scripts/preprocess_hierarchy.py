@@ -283,6 +283,12 @@ def main():
 
     # ── Create Israel Canyon custom subdivision ──
     print("\nCreating Israel Canyon subdivision...")
+    teguayo_mask = subdivisions["NAME"].astype(str).str.contains("Teguayo", case=False, na=False)
+    teguayo_geom = None
+    if teguayo_mask.any():
+        teguayo_geom = subdivisions[teguayo_mask].geometry.iloc[0]
+        subdivisions = subdivisions[~teguayo_mask].copy()
+
     israel_canyon_pids = [
         "590110005", "590110006", "590110010", "590110011", "590110012",
         "590110015", "590110016", "590110017", "590110018", "590110019",
@@ -293,13 +299,27 @@ def main():
         "590110058", "590110059", "590110060", "590110061", "590110070",
         "590110073", "590110075", "590110076", "590110079", "590110082",
         "590110086", "590110087", "590110088", "590230032", "590230036",
-        "590230037", "590230038", "590230034"
+        "590230037", "590230038", "590230034",
+        "590230027", "590230005", "590230030", "590130095"
     ]
-    ic_mask = parcels["PARCELID"].astype(str).isin(israel_canyon_pids)
+    
+    mask_pid = parcels["PARCELID"].astype(str).isin(israel_canyon_pids)
+    mask_waldo = parcels["OWNER_NAME"].astype(str).str.contains("Waldo", case=False, na=False)
+    mask_weakland = parcels["OWNER_NAME"].astype(str).str.contains("Weakland", case=False, na=False)
+    mask_jeppesen = parcels["OWNER_NAME"].astype(str).str.contains("Jeppesen", case=False, na=False)
+    mask_scp = parcels["OWNER_NAME"].astype(str).str.contains("Scp Fox Hollow", case=False, na=False)
+    mask_johnson = parcels["OWNER_NAME"].astype(str).str.contains("Johnson, Kathy", case=False, na=False)
+    
+    mask_teguayo = pd.Series(False, index=parcels.index)
+    if teguayo_geom is not None:
+        centroids_4326 = parcels.to_crs(epsg=3566).geometry.centroid.to_crs(epsg=4326)
+        mask_teguayo = centroids_4326.within(teguayo_geom)
+
+    ic_mask = mask_pid | mask_waldo | mask_weakland | mask_jeppesen | mask_scp | mask_johnson | mask_teguayo
+
     if ic_mask.any():
         ic_parcels = parcels[ic_mask]
         ic_sub_id = 4500000
-        ic_plat_oid = 4600000
         
         from shapely.ops import unary_union
         ic_geom = unary_union(ic_parcels.geometry.dropna().tolist())
@@ -316,20 +336,41 @@ def main():
         }], crs=subdivisions.crs)
         subdivisions = pd.concat([subdivisions, ic_sub_df], ignore_index=True)
         
-        ic_plat_df = gpd.GeoDataFrame([{
-            "OBJECTID": ic_plat_oid,
-            "Name": "Plat for Israel Canyon",
-            "label": "A",
-            "Acres": total_ic_acres,
-            "SubID": ic_sub_id,
-            "_sub_id": ic_sub_id,
-            "landUse": "Residential",
-            "geometry": ic_geom
-        }], crs=plats.crs)
+        new_plat_rows_ic = []
+        base_plat_oid = 4600000
+        
+        parcels.loc[ic_mask, "_plat_oid"] = None
+
+        def clean_owner(name):
+            if pd.isna(name): return "Unknown Owner"
+            s = str(name).strip().title()
+            if not s: return "Unknown Owner"
+            return s.replace("Lds", "LDS").replace("Udot", "UDOT").replace(" Us ", " US ")
+
+        ic_owners = ic_parcels["OWNER_NAME"].apply(clean_owner)
+        ic_parcels_grouped = ic_parcels.groupby(ic_owners)
+
+        for p_idx, (owner_name, group) in enumerate(ic_parcels_grouped):
+            plat_oid = base_plat_oid + p_idx
+            group_geom = unary_union(group.geometry.dropna().tolist())
+            group_acres = sum(safe_value(p.get("ACREAGE") or 0.0) for _, p in group.iterrows())
+            
+            new_plat_rows_ic.append({
+                "OBJECTID": plat_oid,
+                "Name": f"Plat for {owner_name}",
+                "label": "A",
+                "Acres": round(group_acres, 2),
+                "SubID": ic_sub_id,
+                "_sub_id": ic_sub_id,
+                "landUse": "Mixed",
+                "geometry": group_geom
+            })
+            parcels.loc[group.index, "_plat_oid"] = plat_oid
+
+        ic_plat_df = gpd.GeoDataFrame(new_plat_rows_ic, crs=plats.crs)
         plats = pd.concat([plats, ic_plat_df], ignore_index=True)
         
-        parcels.loc[ic_mask, "_plat_oid"] = ic_plat_oid
-        print(f"  Assigned {ic_mask.sum()} parcels to Israel Canyon")
+        print(f"  Assigned {ic_mask.sum()} parcels to Israel Canyon across {len(new_plat_rows_ic)} plats")
 
     # ── Promote parcels 98% not in a subdivision to subdivision status ──
     print("\nPromoting unassigned parcels...")
@@ -482,8 +523,18 @@ def main():
 
         possible = list(subdiv_sindex.intersection(geom.bounds))
         pct_not_in = 1.0
+        best_sub_id = None
         if len(possible) > 0:
             intersecting = subdivs_proj.iloc[possible]
+            max_area = 0
+            for _, sub_row in intersecting.iterrows():
+                if sub_row.geometry is None or sub_row.geometry.is_empty:
+                    continue
+                inter_area = geom.intersection(sub_row.geometry).area
+                if inter_area > max_area:
+                    max_area = inter_area
+                    best_sub_id = sub_row["ID"]
+
             from shapely.ops import unary_union
             intersect_geom = geom.intersection(unary_union(intersecting.geometry.tolist()))
             if geom.area > 0:
@@ -535,6 +586,26 @@ def main():
             # Update parcel's parent plat link
             parcels.at[p_idx, "_plat_oid"] = plat_oid
             single_promotions += 1
+            
+        elif best_sub_id is not None:
+            # Parcel falls inside a subdivision, so create a virtual plat for it inside that subdivision
+            orig_p_row = parcels.loc[p_idx]
+            parcel_id = orig_p_row.get("PARCELID")
+            site_addr = orig_p_row.get("SITE_FULL_")
+            p_name = site_addr or f"Parcel {parcel_id}"
+            plat_oid = int(6000000 + p_idx)
+            
+            new_plat_rows.append({
+                "OBJECTID": plat_oid,
+                "Name": f"Plat for {p_name}",
+                "label": "A",
+                "Acres": safe_value(orig_p_row.get("ACREAGE")),
+                "SubID": best_sub_id,
+                "_sub_id": best_sub_id,
+                "landUse": orig_p_row.get("landUse"),
+                "geometry": orig_p_row.geometry
+            })
+            parcels.at[p_idx, "_plat_oid"] = plat_oid
 
     print(f"  Promoted {cluster_promotions} clustered parcels and {single_promotions} single parcels to subdivision status.")
 

@@ -128,6 +128,8 @@ def main():
     city_boundary = load_layer(os.path.join(MAPS_DIR, "boundaries", "city_boundary.geojson"))
     subdivisions = load_layer(os.path.join(MAPS_DIR, "boundaries", "subdivisions.geojson"))
     subdivisions.loc[subdivisions["NAME"] == "Beacon Pointe", "TYPE"] = "Subdivision"
+    subdivisions.loc[subdivisions["NAME"] == "Saratoga Springs Development", "ID"] = 910
+
     plats = load_layer(os.path.join(MAPS_DIR, "boundaries", "plat.geojson"))
     parcels = load_layer(os.path.join(MAPS_DIR, "buildings_and_parcels", "parcels.zip"))
     addresses = load_layer(os.path.join(MAPS_DIR, "buildings_and_parcels", "address_points.zip"))
@@ -156,6 +158,42 @@ def main():
     print(f"  Roads: {len(roads)}")
     print(f"  Paths: {len(paths)}")
     print(f"  Land Use: {len(landuse)}")
+
+    print("\nFiltering layers (LEHI and tiny geometries)...")
+    def filter_lehi(gdf):
+        mask = pd.Series(True, index=gdf.index)
+        for col in gdf.select_dtypes(include=['object', 'string']).columns:
+            mask = mask & (~gdf[col].astype(str).str.contains("LEHI, UT", case=False, na=False))
+        return gdf[mask].copy()
+
+    def filter_small_geoms(gdf, min_area_sqm=5.0, min_pp=0.01):
+        if gdf.empty or not gdf.geometry.geom_type.isin(['Polygon', 'MultiPolygon']).any():
+            return gdf
+        is_poly = gdf.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])
+        proj_geoms = gdf[is_poly].geometry.to_crs(epsg=3566)
+        areas = proj_geoms.area
+        perimeters = proj_geoms.length
+        # Protect against div by zero
+        perimeters = perimeters.replace(0, np.nan)
+        pp_scores = (4 * np.pi * areas) / (perimeters ** 2)
+        
+        valid_poly_mask = (areas >= min_area_sqm) & (pp_scores >= min_pp)
+        valid_mask = pd.Series(True, index=gdf.index)
+        valid_mask.loc[is_poly] = valid_poly_mask
+        
+        return gdf[valid_mask].copy()
+
+    subdivisions = filter_lehi(filter_small_geoms(subdivisions))
+    plats = filter_lehi(filter_small_geoms(plats))
+    parcels = filter_lehi(filter_small_geoms(parcels))
+    buildings = filter_lehi(filter_small_geoms(buildings, min_area_sqm=1.0))
+    addresses = filter_lehi(addresses)
+
+    print(f"  After filter Subdivisions: {len(subdivisions)}")
+    print(f"  After filter Plats: {len(plats)}")
+    print(f"  After filter Parcels: {len(parcels)}")
+    print(f"  After filter Addresses: {len(addresses)}")
+    print(f"  After filter Buildings: {len(buildings)}")
 
     # Match plats to majority Land Use
     print("Matching Plats to majority Land Use...")

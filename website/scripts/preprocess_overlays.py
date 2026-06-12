@@ -22,58 +22,7 @@ OUTPUT_DIR = os.path.join(WEBSITE_DIR, "public", "data")
 SIMPLIFY_PARK = 0.00005     # ~5.5m — park boundaries
 COORD_PRECISION = 6         # decimal places for coordinates
 
-def load_layer(path):
-    """Load a GIS layer and reproject to EPSG:4326."""
-    gdf = gpd.read_file(path)
-    if gdf.crs and gdf.crs != "EPSG:4326":
-        gdf = gdf.to_crs("EPSG:4326")
-    return gdf
-
-def simplify_geometry(gdf, tolerance):
-    """Simplify geometries and drop empty/null results."""
-    gdf = gdf.copy()
-    gdf["geometry"] = gdf.geometry.simplify(tolerance, preserve_topology=True)
-    gdf = gdf[~gdf.geometry.is_empty & gdf.geometry.notna()]
-    return gdf
-
-def round_coords(geojson_dict, precision=COORD_PRECISION):
-    """Recursively round coordinates in a GeoJSON-like dict to save space."""
-    if isinstance(geojson_dict, dict):
-        return {k: round_coords(v, precision) for k, v in geojson_dict.items()}
-    elif isinstance(geojson_dict, list):
-        return [round_coords(item, precision) for item in geojson_dict]
-    if isinstance(geojson_dict, float):
-        return round(geojson_dict, precision)
-    return geojson_dict
-
-def safe_int(val):
-    """Safely convert a value to an integer."""
-    if val is None or (isinstance(val, float) and np.isnan(val)):
-        return 0
-    try:
-        return int(float(val))
-    except (ValueError, TypeError):
-        return 0
-
-def safe_value(val):
-    """Convert numpy/pandas types to JSON-safe Python types."""
-    if val is None or (isinstance(val, float) and np.isnan(val)):
-        return None
-    if isinstance(val, (np.integer,)):
-        return int(val)
-    if isinstance(val, (np.floating,)):
-        return round(float(val), 4)
-    if isinstance(val, (pd.Timestamp,)):
-        return val.isoformat()
-    return val
-
-def write_json(data, path):
-    """Write JSON to file, creating directories as needed."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, separators=(",", ":"))
-    size_kb = os.path.getsize(path) / 1024
-    print(f"  Wrote {path} ({size_kb:.0f} KB)")
+from pipeline.utils import load_layer, simplify_geometry, round_coords, safe_value, safe_int, write_json
 
 # ─── POI Categorization ─────────────────────────────────────────────────────
 

@@ -213,7 +213,7 @@ function TreeNode({ node, depth, selection, expandedNodes, onNavigate, hiddenSub
     ? (node.buildingCount > 0 ? node.buildingCount : (node.addressCount > 0 ? node.addressCount : null))
     : type === 'building'
     ? (node.addressCount > 0 ? node.addressCount : null)
-    : (node.parcelCount || node.children?.length || null);
+    : (node.addressCount || node.children?.length || null);
 
   // Color dot for subdivisions.
   const subdivisionColor = type === 'subdivision' ? getSubdivisionColor(node.subdivisionType) : undefined;

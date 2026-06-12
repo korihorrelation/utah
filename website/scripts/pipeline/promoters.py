@@ -12,7 +12,8 @@ from .utils import safe_value, clean_owner_name
 from .config import (ISRAEL_CANYON_SUB_ID, ISRAEL_CANYON_PLAT_BASE,
                      NAME_MATCHED_PLAT_BASE, SINGLE_PROMOTED_SUB_BASE,
                      SINGLE_PROMOTED_PLAT_BASE, CLUSTER_PROMOTED_SUB_BASE,
-                     CLUSTER_PROMOTED_PLAT_BASE)
+                     CLUSTER_PROMOTED_PLAT_BASE,
+                     ROADS_SUB_ID, ROADS_PLAT_BASE)
 
 
 def create_israel_canyon(parcels, subdivisions, plats):
@@ -104,3 +105,479 @@ def create_israel_canyon(parcels, subdivisions, plats):
         print(f"  Assigned {ic_mask.sum()} parcels to Israel Canyon across {len(new_plat_rows_ic)} plats")
 
     return parcels, subdivisions, plats
+
+
+def _is_parcel_unassigned(p_row, plat_sub_lookup):
+    """Check if a parcel is unassigned (no plat or plat has no subdivision)."""
+    plat_oid = p_row.get("_plat_oid")
+    if pd.isna(plat_oid):
+        return True
+    sub_id = plat_sub_lookup.get(int(plat_oid))
+    return pd.isna(sub_id)
+
+
+def _clean_sub_name(sub_name):
+    """Clean a SUB_NAME value for fuzzy matching against subdivision names."""
+    s = str(sub_name).strip().lower()
+    s = re.sub(r'[\s,]+(plat|phase|ph|road church)[\s\w]*$', '', s)
+    s = re.sub(r'[\s,]+plat[\s\w]*$', '', s)
+    s = re.sub(r'[\s,]+phase[\s\w]*$', '', s)
+    return s.strip()
+
+
+def match_unassigned_by_name(parcels, plats, subdivisions):
+    """Match unassigned parcels to existing subdivisions by SUB_NAME field.
+    
+    Returns:
+        (parcels, plats) — both modified in place and returned.
+    """
+    plat_sub_lookup = plats.set_index("OBJECTID")["_sub_id"].to_dict()
+    unassigned_mask = parcels.apply(
+        lambda row: _is_parcel_unassigned(row, plat_sub_lookup), axis=1
+    )
+
+    print("Matching unassigned parcels to existing subdivisions by SUB_NAME...")
+    sub_name_lookup = {
+        str(row["NAME"]).strip().lower(): int(row["ID"])
+        for _, row in subdivisions.iterrows()
+    }
+
+    name_matched_count = 0
+    new_plat_rows = []
+
+    for p_idx, p_row in parcels[unassigned_mask].iterrows():
+        sub_name_val = p_row.get("SUB_NAME")
+        if pd.isna(sub_name_val) or not str(sub_name_val).strip():
+            continue
+
+        clean_name = _clean_sub_name(sub_name_val)
+        if clean_name in sub_name_lookup:
+            matched_sub_id = sub_name_lookup[clean_name]
+
+            sub_plats = plats[plats["_sub_id"] == matched_sub_id]
+            best_plat_oid = None
+
+            sub_name_val_lower = str(sub_name_val).lower()
+            for _, plat_row in sub_plats.iterrows():
+                plat_name = str(plat_row.get("Name") or "").lower()
+                plat_label = str(plat_row.get("Plat") or "").lower()
+                if (plat_name in sub_name_val_lower
+                        or (plat_label and f"plat {plat_label}" in sub_name_val_lower)
+                        or (plat_label and f"phase {plat_label}" in sub_name_val_lower)):
+                    best_plat_oid = int(plat_row["OBJECTID"])
+                    break
+
+            if best_plat_oid is None:
+                if len(sub_plats) > 0:
+                    best_plat_oid = int(sub_plats.iloc[0]["OBJECTID"])
+                else:
+                    best_plat_oid = NAME_MATCHED_PLAT_BASE + p_idx
+                    new_plat_rows.append({
+                        "OBJECTID": best_plat_oid,
+                        "Name": f"Plat for {sub_name_val.strip().title()}",
+                        "label": "A",
+                        "Acres": safe_value(p_row.get("ACREAGE")),
+                        "SubID": matched_sub_id,
+                        "_sub_id": matched_sub_id,
+                        "landUse": p_row.get("landUse"),
+                        "geometry": p_row.geometry
+                    })
+
+            parcels.at[p_idx, "_plat_oid"] = best_plat_oid
+            if best_plat_oid >= NAME_MATCHED_PLAT_BASE:
+                plat_sub_lookup[best_plat_oid] = matched_sub_id
+            name_matched_count += 1
+
+    if len(new_plat_rows) > 0:
+        new_plat_df = gpd.GeoDataFrame(new_plat_rows, crs=plats.crs)
+        plats = pd.concat([plats, new_plat_df], ignore_index=True)
+        print(f"  Created {len(new_plat_rows)} virtual plats for name-matched unassigned parcels.")
+
+    # Re-evaluate unassigned count
+    unassigned_mask = parcels.apply(
+        lambda row: _is_parcel_unassigned(row, plat_sub_lookup), axis=1
+    )
+    remaining = unassigned_mask.sum()
+    print(f"  Name-matched and assigned {name_matched_count} parcels to existing subdivisions. Remaining unassigned: {remaining}")
+
+    return parcels, plats
+
+
+def _infer_sub_type(land_use_val):
+    """Infer subdivision TYPE from a land use description string."""
+    land_use_lower = str(land_use_val or "").lower()
+    if any(x in land_use_lower for x in ["res", "dwelling", "apartment", "condo", "townhouse", "housing"]):
+        return "Subdivision"
+    elif any(x in land_use_lower for x in ["comm", "retail", "office", "shop", "business", "industrial"]):
+        return "Commercial"
+    return "CommunityPlan"
+
+
+def _get_parcel_display_name(orig_p_row):
+    """Get a display name for a parcel from SUB_NAME, address, or parcel ID."""
+    import pandas as _pd
+    sub_name_val = orig_p_row.get("SUB_NAME")
+    if _pd.notna(sub_name_val) and str(sub_name_val).strip():
+        return str(sub_name_val).strip().title()
+    site_addr = orig_p_row.get("SITE_FULL_")
+    parcel_id = orig_p_row.get("PARCELID")
+    return site_addr or f"Parcel {parcel_id}"
+
+
+def promote_unassigned_parcels(parcels, subdivisions, plats):
+    """Promote unassigned parcels to subdivision status.
+    
+    Two strategies:
+    A. Cluster touching parcels with same owner into a single virtual subdivision.
+    B. Promote single orphan parcels (98%+ outside all subdivisions) to their own subdivision,
+       or create a virtual plat inside the best-matching subdivision.
+    
+    Returns:
+        (parcels, subdivisions, plats) — all modified.
+    """
+    import networkx as nx
+
+    print("\nPromoting unassigned parcels...")
+    parcels_proj = parcels.to_crs(epsg=3566)
+    subdivs_proj = subdivisions.to_crs(epsg=3566)
+
+    plat_sub_lookup = plats.set_index("OBJECTID")["_sub_id"].to_dict()
+    unassigned_mask = parcels.apply(
+        lambda row: _is_parcel_unassigned(row, plat_sub_lookup), axis=1
+    )
+    unassigned_parcels_proj = parcels_proj[unassigned_mask].copy()
+
+    # Group by cleaned owner name
+    unassigned_parcels_proj["owner_clean"] = unassigned_parcels_proj["OWNER_NAME"].fillna("").str.strip().str.upper()
+    valid_owner_mask = unassigned_parcels_proj["owner_clean"] != ""
+    unassigned_with_owner = unassigned_parcels_proj[valid_owner_mask]
+
+    clusters = []
+    clustered_indices = set()
+
+    for owner, group in unassigned_with_owner.groupby("owner_clean"):
+        if len(group) < 2:
+            continue
+
+        G = nx.Graph()
+        G.add_nodes_from(group.index)
+
+        sindex = group.sindex
+        for idx, row in group.iterrows():
+            geom = row.geometry
+            if geom is None or geom.is_empty:
+                continue
+            possible = list(sindex.intersection(geom.bounds))
+            for p_idx in possible:
+                other_idx = group.index[p_idx]
+                if other_idx == idx:
+                    continue
+                other_geom = group.loc[other_idx].geometry
+                if geom.intersects(other_geom.buffer(0.1)):
+                    G.add_edge(idx, other_idx)
+
+        for component in nx.connected_components(G):
+            if len(component) >= 2:
+                clusters.append((owner, list(component)))
+                clustered_indices.update(component)
+
+    print(f"  Found {len(clusters)} clusters of touching parcels with matching owner.")
+
+    new_subdiv_rows = []
+    new_plat_rows = []
+    cluster_promotions = 0
+    single_promotions = 0
+
+    # A. Process clusters
+    for c_idx, (owner, comp_indices) in enumerate(clusters):
+        owner_display = clean_owner_name(owner)
+        sub_name = f"{owner_display} Area"
+        sub_id = int(CLUSTER_PROMOTED_SUB_BASE + c_idx)
+
+        first_row = parcels.loc[comp_indices[0]]
+        sub_type = _infer_sub_type(first_row.get("landUse"))
+
+        cluster_geoms = parcels.loc[comp_indices, "geometry"]
+        subdiv_geom = unary_union(cluster_geoms.tolist())
+        total_acres = sum(safe_value(parcels.loc[idx].get("ACREAGE") or 0.0) for idx in comp_indices)
+
+        new_subdiv_rows.append({
+            "ID": sub_id, "NAME": sub_name, "DENSITY": "N/A",
+            "ACRE": round(total_acres, 2), "STATUS": "Active",
+            "TYPE": sub_type, "geometry": subdiv_geom
+        })
+
+        for p_idx in comp_indices:
+            orig_p_row = parcels.loc[p_idx]
+            p_name = orig_p_row.get("SITE_FULL_") or f"Parcel {orig_p_row.get('PARCELID')}"
+            plat_oid = int(CLUSTER_PROMOTED_PLAT_BASE + p_idx)
+
+            new_plat_rows.append({
+                "OBJECTID": plat_oid, "Name": f"Plat for {p_name}", "label": "A",
+                "Acres": safe_value(orig_p_row.get("ACREAGE")),
+                "SubID": sub_id, "_sub_id": sub_id,
+                "landUse": orig_p_row.get("landUse"), "geometry": orig_p_row.geometry
+            })
+            parcels.at[p_idx, "_plat_oid"] = plat_oid
+            cluster_promotions += 1
+
+    # B. Process single unassigned parcels
+    subdiv_sindex = subdivs_proj.sindex
+    orphans_by_sub = {}
+
+    for p_idx, p_row in unassigned_parcels_proj.iterrows():
+        if p_idx in clustered_indices:
+            continue
+        if not pd.isna(parcels.loc[p_idx, "_plat_oid"]):
+            continue
+
+        geom = p_row.geometry
+        if geom is None or geom.is_empty:
+            continue
+
+        possible = list(subdiv_sindex.intersection(geom.bounds))
+        pct_not_in = 1.0
+        best_sub_id = None
+        if len(possible) > 0:
+            intersecting = subdivs_proj.iloc[possible]
+            max_area = 0
+            for _, sub_row in intersecting.iterrows():
+                if sub_row.geometry is None or sub_row.geometry.is_empty:
+                    continue
+                inter_area = geom.intersection(sub_row.geometry).area
+                if inter_area > max_area:
+                    max_area = inter_area
+                    best_sub_id = sub_row["ID"]
+
+            intersect_geom = geom.intersection(unary_union(intersecting.geometry.tolist()))
+            if geom.area > 0:
+                pct_not_in = (geom.area - intersect_geom.area) / geom.area
+
+        if pct_not_in >= 0.98:
+            orig_p_row = parcels.loc[p_idx]
+            p_name = _get_parcel_display_name(orig_p_row)
+            sub_type = _infer_sub_type(orig_p_row.get("landUse"))
+            sub_id = int(SINGLE_PROMOTED_SUB_BASE + p_idx)
+            plat_oid = int(SINGLE_PROMOTED_PLAT_BASE + p_idx)
+
+            new_subdiv_rows.append({
+                "ID": sub_id, "NAME": p_name, "DENSITY": "N/A",
+                "ACRE": safe_value(orig_p_row.get("ACREAGE")),
+                "STATUS": "Active", "TYPE": sub_type, "geometry": orig_p_row.geometry
+            })
+            new_plat_rows.append({
+                "OBJECTID": plat_oid, "Name": f"Plat for {p_name}", "label": "A",
+                "Acres": safe_value(orig_p_row.get("ACREAGE")),
+                "SubID": sub_id, "_sub_id": sub_id,
+                "landUse": orig_p_row.get("landUse"), "geometry": orig_p_row.geometry
+            })
+            parcels.at[p_idx, "_plat_oid"] = plat_oid
+            single_promotions += 1
+
+        elif best_sub_id is not None:
+            if best_sub_id not in orphans_by_sub:
+                orphans_by_sub[best_sub_id] = []
+            orphans_by_sub[best_sub_id].append(p_idx)
+
+    sub_id_to_name = subdivisions.set_index("ID")["NAME"].to_dict()
+    plat_counter = 0
+    for sub_id, p_indices in orphans_by_sub.items():
+        sub_name = sub_id_to_name.get(sub_id, f"Subdivision {sub_id}")
+        plat_oid = int(SINGLE_PROMOTED_PLAT_BASE + 50000 + plat_counter)
+        plat_counter += 1
+        
+        group_parcels = parcels.loc[p_indices]
+        group_geom = unary_union(group_parcels.geometry.dropna().tolist())
+        group_acres = sum(safe_value(p.get("ACREAGE") or 0.0) for _, p in group_parcels.iterrows())
+        
+        new_plat_rows.append({
+            "OBJECTID": plat_oid, "Name": f"{sub_name} Parcels Misc", "label": "Misc",
+            "Acres": round(group_acres, 2),
+            "SubID": sub_id, "_sub_id": sub_id,
+            "landUse": "Mixed", "geometry": group_geom
+        })
+        parcels.loc[p_indices, "_plat_oid"] = plat_oid
+
+    print(f"  Promoted {cluster_promotions} clustered parcels, {single_promotions} single parcels, and grouped {sum(len(v) for v in orphans_by_sub.values())} inside subdivisions into {len(orphans_by_sub)} Misc plats.")
+
+    if len(new_subdiv_rows) > 0:
+        new_subdiv_df = gpd.GeoDataFrame(new_subdiv_rows, crs=subdivisions.crs)
+        subdivisions = pd.concat([subdivisions, new_subdiv_df], ignore_index=True)
+        print(f"  Appended {len(new_subdiv_rows)} subdivisions.")
+
+    if len(new_plat_rows) > 0:
+        new_plat_df = gpd.GeoDataFrame(new_plat_rows, crs=plats.crs)
+        plats = pd.concat([plats, new_plat_df], ignore_index=True)
+        print(f"  Appended {len(new_plat_rows)} plats.")
+
+    return parcels, subdivisions, plats
+
+
+def breakout_ssd_subdivisions(subdivisions, plats):
+    """Break out the Saratoga Springs Development mega-subdivision into constituent neighborhoods."""
+    print("\nBreaking out Saratoga Springs Development into distinct neighborhoods...")
+    
+    ssd_plats_mask = (plats["_sub_id"] == 910)
+    ssd_plats = plats[ssd_plats_mask].copy()
+    
+    if len(ssd_plats) == 0:
+        return subdivisions, plats
+        
+    def get_ssd_group(row):
+        sub = str(row.get('Subdivision', ''))
+        name = str(row.get('Name', ''))
+        if 'Ironwood' in sub or 'Ironwood' in name: return 'Ironwood'
+        if 'Wiltshire' in sub or 'Wiltshire' in name: return 'Wiltshire'
+        if 'Lakeside' in name: return 'Lakeside'
+        if 'Talons Cove' in name: return 'Talons Cove'
+        if 'Eagle Park' in name: return 'Eagle Park'
+        if 'Fairway' in name: return 'Fairway'
+        return 'Saratoga Springs Development'
+        
+    groups = ssd_plats.apply(get_ssd_group, axis=1)
+    
+    new_subdiv_rows = []
+    base_id = 91000
+    
+    for g_idx, (g_name, g_plats) in enumerate(ssd_plats.groupby(groups)):
+        if g_name == 'Saratoga Springs Development':
+            continue
+            
+        g_geom = unary_union(g_plats.geometry.dropna().tolist())
+        g_acres = sum(safe_value(p.get("Acres") or p.get("ACRE") or 0.0) for _, p in g_plats.iterrows())
+        g_id = base_id + g_idx + 1
+        
+        new_subdiv_rows.append({
+            "ID": g_id,
+            "NAME": g_name,
+            "DENSITY": "N/A",
+            "ACRE": round(g_acres, 2),
+            "STATUS": "Active",
+            "TYPE": "Subdivision",
+            "CATEGORY": "Other", 
+            "geometry": g_geom
+        })
+        
+        plats.loc[g_plats.index, "_sub_id"] = g_id
+        
+    if new_subdiv_rows:
+        new_subdiv_df = gpd.GeoDataFrame(new_subdiv_rows, crs=subdivisions.crs)
+        subdivisions = pd.concat([subdivisions, new_subdiv_df], ignore_index=True)
+        print(f"  Created {len(new_subdiv_rows)} new SSD neighborhoods.")
+        
+    generic_mask = (plats["_sub_id"] == 910)
+    generic_plats = plats[generic_mask]
+    if len(generic_plats) > 0:
+        new_ssd_geom = unary_union(generic_plats.geometry.dropna().tolist())
+        ssd_sub_mask = subdivisions["ID"] == 910
+        if ssd_sub_mask.any():
+            subdivisions.loc[ssd_sub_mask, "geometry"] = gpd.GeoSeries([new_ssd_geom], crs=subdivisions.crs).values
+            
+    return subdivisions, plats
+
+
+def create_roads_subdivision(parcels, subdivisions, plats, rules):
+    """Pull UDOT/State-owned road parcels into a dedicated 'Roads' subdivision.
+    
+    Parcels owned by transportation agencies are removed from their current
+    plat assignments and grouped by owner into new plats under a single
+    'Roads' subdivision with Public zoning. Any promoted subdivisions that
+    become empty as a result are also cleaned up.
+    
+    Returns:
+        (parcels, subdivisions, plats) — all modified.
+    """
+    print("\nCreating Roads subdivision for UDOT/State-owned parcels...")
+    
+    road_owners_upper = {o.upper() for o in rules.get("road_owners", [
+        "UTAH DEPARTMENT OF TRANSPORTATION",
+        "UDOT",
+        "DEPARTMENT OF TRANSPORTATION",
+        "STATE ROAD COMMISSION OF UTAH",
+    ])}
+    
+    owner_col = parcels["OWNER_NAME"].fillna("").str.strip().str.upper()
+    road_mask = owner_col.isin(road_owners_upper)
+    
+    if not road_mask.any():
+        print("  No road parcels found.")
+        return parcels, subdivisions, plats
+    
+    road_parcels = parcels[road_mask]
+    print(f"  Found {len(road_parcels)} UDOT/State road parcels.")
+    
+    # Track which plats/subdivisions these parcels used to belong to
+    affected_plat_oids = set(road_parcels["_plat_oid"].dropna().unique())
+    
+    # Unassign these parcels from their current plats
+    parcels.loc[road_mask, "_plat_oid"] = None
+    
+    # Create the Roads subdivision
+    roads_geom = unary_union(road_parcels.geometry.dropna().tolist())
+    total_acres = sum(safe_value(p.get("ACREAGE") or 0.0) for _, p in road_parcels.iterrows())
+    
+    roads_sub_df = gpd.GeoDataFrame([{
+        "ID": ROADS_SUB_ID,
+        "NAME": "Roads",
+        "DENSITY": "N/A",
+        "ACRE": round(total_acres, 2),
+        "STATUS": "Active",
+        "TYPE": "CommunityPlan",
+        "CATEGORY": "Public",
+        "geometry": roads_geom
+    }], crs=subdivisions.crs)
+    subdivisions = pd.concat([subdivisions, roads_sub_df], ignore_index=True)
+    
+    # Group parcels by cleaned owner name into plats
+    owner_groups = road_parcels.groupby(owner_col[road_mask])
+    new_plat_rows = []
+    
+    for p_idx, (owner_name, group) in enumerate(owner_groups):
+        plat_oid = ROADS_PLAT_BASE + p_idx
+        group_geom = unary_union(group.geometry.dropna().tolist())
+        group_acres = sum(safe_value(p.get("ACREAGE") or 0.0) for _, p in group.iterrows())
+        
+        # Clean up the display name
+        display_name = owner_name.title()
+        
+        new_plat_rows.append({
+            "OBJECTID": plat_oid,
+            "Name": display_name,
+            "label": "",
+            "Acres": round(group_acres, 2),
+            "SubID": ROADS_SUB_ID,
+            "_sub_id": ROADS_SUB_ID,
+            "landUse": "Transportation",
+            "geometry": group_geom
+        })
+        parcels.loc[group.index, "_plat_oid"] = plat_oid
+    
+    if new_plat_rows:
+        new_plat_df = gpd.GeoDataFrame(new_plat_rows, crs=plats.crs)
+        plats = pd.concat([plats, new_plat_df], ignore_index=True)
+        print(f"  Created {len(new_plat_rows)} owner-grouped plats under Roads subdivision.")
+    
+    # Clean up: remove plats that now have zero parcels
+    empty_plat_count = 0
+    for plat_oid in affected_plat_oids:
+        remaining = parcels[parcels["_plat_oid"] == plat_oid]
+        if len(remaining) == 0:
+            plats = plats[plats["OBJECTID"] != plat_oid].copy()
+            empty_plat_count += 1
+    
+    # Clean up: remove subdivisions that now have zero plats
+    empty_sub_count = 0
+    for _, sub_row in subdivisions.iterrows():
+        sub_id = sub_row["ID"]
+        if sub_id == ROADS_SUB_ID:
+            continue
+        sub_plats = plats[plats["_sub_id"] == sub_id]
+        if len(sub_plats) == 0:
+            subdivisions = subdivisions[subdivisions["ID"] != sub_id].copy()
+            empty_sub_count += 1
+    
+    if empty_plat_count > 0 or empty_sub_count > 0:
+        print(f"  Cleaned up {empty_plat_count} empty plats and {empty_sub_count} empty subdivisions.")
+    
+    return parcels, subdivisions, plats
+

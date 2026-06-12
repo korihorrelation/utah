@@ -52,6 +52,16 @@ def safe_value(val):
     return val
 
 
+def safe_int(val):
+    """Safely convert a value to an integer."""
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return 0
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return 0
+
+
 def gdf_to_features(gdf, properties_map, id_field=None):
     """
     Convert a GeoDataFrame to a list of GeoJSON features with selected properties.

@@ -37,6 +37,7 @@ residential_communities:
   - Lake Mountain Estates
   - Lake View Terrace
   - "Lakeside 25, 26, 27"
+  - Lakeside
   - Landrock Connection
   - Landrock Estates
   - Legacy Farms
@@ -55,6 +56,7 @@ residential_communities:
   - River Heights
   - Saratoga Chase
   - Saratoga Hills
+  - Saratoga Springs Development
   - Seargent Court
   - Secret Springs
   - Sierra Estates
@@ -68,16 +70,24 @@ residential_communities:
   - The Benches
   - The Cove at Jordan River
   - The Gables
+  - The Reserve on the Lake
   - The Villages at Saratoga
+  - Towns @ Riverside Crossing
   - Utah Lake Estates
   - Viviano
   - Wander
   - Wellspring
   - West Lake Estates
   - West Ridge Estates
+  - Westview Estates
   - Western Hills
   - Wildflower
   - Willow Glen
+  - Wiltshire
+  - Talons Cove
+  - Eagle Park
+  - Ironwood
+  - Fairway
 
 mixed_housing:
   - American Car Care
@@ -93,6 +103,8 @@ commercial_subdivisions:
 # Owners whose parcels make a subdivision "Public"
 public_owners:
   - STATE OF UTAH
+  - STATE OF UTAH (ET AL)
+  - STATE OF UTAH DIVISION OF FORESTRY FIRE AND STATE LANDS (ET AL)
   - TOWN OF SARATOGA SPRINGS
   - SARATOGA SPRINGS CORPORATION
   - SARATOGA SPRINGS CITY
@@ -102,6 +114,13 @@ public_owners:
   - UTAH DEPARTMENT OF TRANSPORTATION
   - ALPINE SCHOOL DISTRICT
   - UDOT
+
+# Owners whose parcels get pulled into the "Roads" subdivision
+road_owners:
+  - UTAH DEPARTMENT OF TRANSPORTATION
+  - UDOT
+  - DEPARTMENT OF TRANSPORTATION
+  - STATE ROAD COMMISSION OF UTAH
 
 # Keywords matched against subdivision NAME (case-insensitive)
 religious_name_keywords:

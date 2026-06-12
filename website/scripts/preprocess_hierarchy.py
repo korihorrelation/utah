@@ -281,6 +281,56 @@ def main():
     addr_matched = addresses["_parcel_idx"].notna().sum()
     print(f"  Matched: {addr_matched}/{len(addresses)}")
 
+    # ── Create Israel Canyon custom subdivision ──
+    print("\nCreating Israel Canyon subdivision...")
+    israel_canyon_pids = [
+        "590110005", "590110006", "590110010", "590110011", "590110012",
+        "590110015", "590110016", "590110017", "590110018", "590110019",
+        "590110021", "590110023", "590110024", "590110025", "590110026",
+        "590110027", "590110028", "590110030", "590110032", "590110034",
+        "590110036", "590110037", "590110038", "590110041", "590110042",
+        "590110046", "590110048", "590110050", "590110053", "590110055",
+        "590110058", "590110059", "590110060", "590110061", "590110070",
+        "590110073", "590110075", "590110076", "590110079", "590110082",
+        "590110086", "590110087", "590110088", "590230032", "590230036",
+        "590230037", "590230038", "590230034"
+    ]
+    ic_mask = parcels["PARCELID"].astype(str).isin(israel_canyon_pids)
+    if ic_mask.any():
+        ic_parcels = parcels[ic_mask]
+        ic_sub_id = 4500000
+        ic_plat_oid = 4600000
+        
+        from shapely.ops import unary_union
+        ic_geom = unary_union(ic_parcels.geometry.dropna().tolist())
+        total_ic_acres = sum(safe_value(p.get("ACREAGE") or 0.0) for _, p in ic_parcels.iterrows())
+        
+        ic_sub_df = gpd.GeoDataFrame([{
+            "ID": ic_sub_id,
+            "NAME": "Israel Canyon",
+            "DENSITY": "N/A",
+            "ACRE": round(total_ic_acres, 2),
+            "STATUS": "Active",
+            "TYPE": "Subdivision",
+            "geometry": ic_geom
+        }], crs=subdivisions.crs)
+        subdivisions = pd.concat([subdivisions, ic_sub_df], ignore_index=True)
+        
+        ic_plat_df = gpd.GeoDataFrame([{
+            "OBJECTID": ic_plat_oid,
+            "Name": "Plat for Israel Canyon",
+            "label": "A",
+            "Acres": total_ic_acres,
+            "SubID": ic_sub_id,
+            "_sub_id": ic_sub_id,
+            "landUse": "Residential",
+            "geometry": ic_geom
+        }], crs=plats.crs)
+        plats = pd.concat([plats, ic_plat_df], ignore_index=True)
+        
+        parcels.loc[ic_mask, "_plat_oid"] = ic_plat_oid
+        print(f"  Assigned {ic_mask.sum()} parcels to Israel Canyon")
+
     # ── Promote parcels 98% not in a subdivision to subdivision status ──
     print("\nPromoting unassigned parcels...")
     # Project to EPSG:3566 for accurate spatial calculations in meters

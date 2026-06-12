@@ -100,9 +100,10 @@ function CategoryNode({ label, color, subdivisions, isExpanded, onToggle, select
 
 const NODE_META = {
   subdivision: { indent: 28, iconCls: 'tree-node__icon--subdivision' },
-  plat:        { indent: 44, iconCls: 'tree-node__icon--plat' },
-  parcel:      { indent: 60, iconCls: 'tree-node__icon--parcel' },
-  address:     { indent: 76, iconCls: 'tree-node__icon--address' },
+  plat: { indent: 44, iconCls: 'tree-node__icon--plat' },
+  parcel: { indent: 60, iconCls: 'tree-node__icon--parcel' },
+  building: { indent: 76, iconCls: 'tree-node__icon--building' },
+  address: { indent: 92, iconCls: 'tree-node__icon--address' },
 };
 
 function TreeNode({ node, depth, selection, expandedNodes, onNavigate }) {
@@ -129,6 +130,8 @@ function TreeNode({ node, depth, selection, expandedNodes, onNavigate }) {
   // Compute display label.
   const label = type === 'plat' && node.label ? `${node.name} (${node.label})` : node.name;
   const countBadge = type === 'parcel'
+    ? (node.buildingCount > 0 ? node.buildingCount : (node.addressCount > 0 ? node.addressCount : null))
+    : type === 'building'
     ? (node.addressCount > 0 ? node.addressCount : null)
     : (node.parcelCount || node.children?.length || null);
 
@@ -156,7 +159,7 @@ function TreeNode({ node, depth, selection, expandedNodes, onNavigate }) {
       {isExpanded && displayChildren.length > 0 && (
         <div className="tree-node__children" role="group">
           {displayChildren.map((child, i) => (
-            <TreeNode key={child.id ?? i} node={child} depth={depth + 1} selection={selection} expandedNodes={expandedNodes} onNavigate={onNavigate} />
+            <TreeNode key={`${child.type || ''}-${child.id ?? i}-${i}`} node={child} depth={depth + 1} selection={selection} expandedNodes={expandedNodes} onNavigate={onNavigate} />
           ))}
           {node.children.length > 200 && (
             <div className="tree-node__row" style={{ paddingLeft: meta.indent + 16, color: 'var(--text-muted)', fontSize: 12, cursor: 'default' }}>
@@ -180,7 +183,7 @@ function ToggleArrow({ expanded, empty }) {
 }
 
 function nodeTypeFromDepth(depth) {
-  return ['subdivision', 'plat', 'parcel', 'address'][depth - 1] ?? 'address';
+  return ['subdivision', 'plat', 'parcel', 'building', 'address'][depth - 1] ?? 'address';
 }
 
 /** Check if the given (type, id) is an ancestor of the current selection. */
@@ -188,8 +191,9 @@ function isNodeInSelectionChain(type, id, selection) {
   if (!selection) return false;
   switch (type) {
     case 'subdivision': return selection.subdivisionId === id;
-    case 'plat':        return selection.platId === id;
-    case 'parcel':      return selection.parcelId === id;
-    default:            return false;
+    case 'plat': return selection.platId === id;
+    case 'parcel': return selection.parcelId === id;
+    case 'building': return selection.buildingId === id;
+    default: return false;
   }
 }

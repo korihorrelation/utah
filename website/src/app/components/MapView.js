@@ -1,16 +1,27 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
-import { MapContainer, TileLayer, GeoJSON, useMap, CircleMarker, Popup, useMapEvents } from 'react-leaflet';
-import { LAYER_STYLES, getSubdivisionColor } from '../lib/colors';
-import 'leaflet/dist/leaflet.css';
+import Map, { Source, Layer, Popup, NavigationControl } from 'react-map-gl/maplibre';
+import { getSubdivisionColor } from '../lib/colors';
+import 'maplibre-gl/dist/maplibre-gl.css';
+
+const DEPTH = { subdivision: 1, plat: 2, parcel: 3, building: 4, address: 5 };
+
+// Building class labels
+const BUILDING_CLASS_LABELS = {
+  1: 'Residential', 2: 'Commercial', 3: 'Industrial', 4: 'Government',
+  6: 'Agricultural', 7: 'Religious', 8: 'Education', 11: 'Utility', 12: 'Other',
+};
+
+// POI color mapping
+const POI_COLORS = {
+  education: '#a78bfa',
+  civic_community: '#fb7185',
+  retail_food: '#fbbf24',
+  healthcare: '#2dd4bf',
+  other: '#9499b3',
+};
 
 /**
- * Interactive Leaflet map with drill-down polygon layers.
- *
- * Visibility rules:
- *   - No active subdivision → show all subdivision polygons (full color).
- *   - Active subdivision → show only that subdivision as a dashed outline,
- *     plus its plats. Clicking a plat reveals its parcels; clicking a parcel
- *     reveals its addresses.
+ * Interactive MapLibre GL map with 3D pitch/tilt and drill-down polygon layers.
  */
 export default function MapView({
   cityBoundary,
@@ -24,13 +35,30 @@ export default function MapView({
   selection,
   onNavigate,
 }) {
-  const center = [40.35, -111.9];
+  const mapRef = useRef(null);
+  const tooltipRef = useRef(null);
   const [showPaths, setShowPaths] = useState(true);
   const [showParks, setShowParks] = useState(true);
   const [showPois, setShowPois] = useState(false);
+  const [showBuildings, setShowBuildings] = useState(true);
+  const [buildingsData, setBuildingsData] = useState(null);
+  const buildingsLoading = useRef(false);
+  const [popupInfo, setPopupInfo] = useState(null);
+  const lastSelectionKey = useRef(null);
 
-  // When drilled into a subdivision, show only that one as an outline.
-  // Otherwise show all subdivisions with full styling.
+  // ── Lazy-load buildings GeoJSON on first toggle ──
+  useEffect(() => {
+    if (showBuildings && !buildingsData && !buildingsLoading.current) {
+      buildingsLoading.current = true;
+      fetch('/data/buildings.geojson')
+        .then(r => r.json())
+        .then(data => setBuildingsData(data))
+        .catch(err => console.error('Failed to load buildings:', err))
+        .finally(() => { buildingsLoading.current = false; });
+    }
+  }, [showBuildings, buildingsData]);
+
+  // ── Subdivision data: filter when drilled down ──
   const subdivisionData = useMemo(() => {
     if (!subdivisions) return null;
     if (!activeSubdivisionId) return subdivisions;
@@ -40,290 +68,212 @@ export default function MapView({
     };
   }, [subdivisions, activeSubdivisionId]);
 
-  return (
-    <div className="map-container">
-      <MapContainer
-        center={center}
-        zoom={12}
-        style={{ width: '100%', height: '100%' }}
-        zoomControl={true}
-        attributionControl={true}
-      >
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
-          maxZoom={19}
-        />
-
-        {/* City Boundary */}
-        {cityBoundary && <GeoJSON data={cityBoundary} style={LAYER_STYLES.cityBoundary} />}
-
-        {/* Roads & Paths (subtle) */}
-        {roads && <GeoJSON data={roads} style={LAYER_STYLES.road} />}
-        {paths && showPaths && <GeoJSON data={paths} style={LAYER_STYLES.path} />}
-
-        {/* Parks & POIs (toggleable overlays) */}
-        {parks && showParks && <ParksLayer data={parks} />}
-        {pois && showPois && <PoisLayer data={pois} />}
-
-        {/* Subdivision polygons */}
-        {/* Subdivision polygons */}
-        {subdivisionData && (
-          <SubdivisionLayer
-            data={subdivisionData}
-            activeSubdivisionId={activeSubdivisionId}
-            selection={selection}
-            onNavigate={onNavigate}
-          />
-        )}
-
-        {/* Drill-down layers: plats → parcels → addresses */}
-        {activeTile && (
-          <DrillDownLayers tile={activeTile} selection={selection} onNavigate={onNavigate} />
-        )}
-
-        {/* Fly to selection */}
-        <FlyToSelection selection={selection} subdivisions={subdivisions} activeTile={activeTile} />
-
-        {/* Click outside boundaries to reset */}
-        <MapClickHandler onMapClick={() => onNavigate('city', 'root', 'Saratoga Springs')} />
-      </MapContainer>
-
-      {/* Layer control panel */}
-      <div 
-        className="map-layers-toggle"
-        onClick={(e) => e.stopPropagation()}
-        onDoubleClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        onWheel={(e) => e.stopPropagation()}
-      >
-        <div className="map-layers-toggle__title">Overlays</div>
-        <label className="map-layers-toggle__item">
-          <input
-            type="checkbox"
-            className="map-layers-toggle__checkbox"
-            checked={showParks}
-            onChange={(e) => setShowParks(e.target.checked)}
-          />
-          <span>Parks</span>
-        </label>
-        <label className="map-layers-toggle__item">
-          <input
-            type="checkbox"
-            className="map-layers-toggle__checkbox"
-            checked={showPaths}
-            onChange={(e) => setShowPaths(e.target.checked)}
-          />
-          <span>Paths</span>
-        </label>
-        <label className="map-layers-toggle__item">
-          <input
-            type="checkbox"
-            className="map-layers-toggle__checkbox"
-            checked={showPois}
-            onChange={(e) => setShowPois(e.target.checked)}
-          />
-          <span>POIs</span>
-        </label>
-      </div>
-
-      <MapLegend
-        activeSubdivisionId={activeSubdivisionId}
-        selection={selection}
-        showParks={showParks}
-        showPaths={showPaths}
-        showPois={showPois}
-      />
-    </div>
-  );
-}
-
-// ── Subdivision polygons ──────────────────────────────────────────────────
-
-function SubdivisionLayer({ data, activeSubdivisionId, selection, onNavigate }) {
-  const isDrilledDown = !!activeSubdivisionId;
-  const isSubSelected = selection?.type === 'subdivision';
-
-  const onEachFeature = useCallback((feature, layer) => {
-    const props = feature.properties;
-    layer.on('click', (e) => {
-      if (e.originalEvent) e.originalEvent.stopPropagation();
-      onNavigate('subdivision', props.id, props.name);
-    });
-    layer.bindTooltip(props.name || 'Unknown', { sticky: true, className: 'subdivision-tooltip' });
-  }, [onNavigate]);
-
-  const style = useCallback((feature) => {
-    const type = feature.properties.type;
-    const color = getSubdivisionColor(type);
-
-    // When drilled down, show a subtle dashed outline.
-    if (isDrilledDown) {
-      return { color, weight: 2, fillColor: color, fillOpacity: 0.03, dashArray: '4, 4' };
-    }
-    // Full view: highlight selected, normal for others.
-    if (isSubSelected && selection?.id === feature.properties.id) {
-      return LAYER_STYLES.subdivisionHighlight(type);
-    }
-    return LAYER_STYLES.subdivision(type);
-  }, [isDrilledDown, isSubSelected, selection?.id]);
-
-  // Key includes activeSubdivisionId so the GeoJSON layer remounts whenever
-  // the underlying polygon data changes (react-leaflet GeoJSON ignores prop updates).
-  const key = `subdiv-${activeSubdivisionId ?? 'all'}-${isSubSelected ? selection?.id : 'none'}`;
-
-  return <GeoJSON key={key} data={data} style={style} onEachFeature={onEachFeature} bubblingMouseEvents={false} />;
-}
-
-// ── Drill-down layers ─────────────────────────────────────────────────────
-
-function DrillDownLayers({ tile, selection, onNavigate }) {
-  // Plats: always visible when drilled into a subdivision.
-  // Parcels: visible when a plat is selected (or deeper).
-  // Addresses: visible when a parcel is selected (or deeper).
+  // ── Drill-down visibility ──
   const depth = DEPTH[selection?.type] ?? 0;
   const showParcels = depth >= 2;
   const showAddresses = depth >= 3;
 
-  return (
-    <>
-      {/* Plat polygons */}
-      {tile.plats?.features.length > 0 && (
-        <PlatLayer plats={tile.plats} selection={selection} onNavigate={onNavigate} />
-      )}
+  // ── Parcel data: filter to selected plat ──
+  const filteredParcels = useMemo(() => {
+    if (!activeTile?.parcels) return null;
+    if (!selection?.platId) return activeTile.parcels;
+    return {
+      ...activeTile.parcels,
+      features: activeTile.parcels.features.filter(f => f.properties.platId === selection.platId),
+    };
+  }, [activeTile?.parcels, selection?.platId]);
 
-      {/* Parcel polygons — scoped to selected plat */}
-      {showParcels && tile.parcels?.features.length > 0 && (
-        <ParcelLayer parcels={tile.parcels} selection={selection} onNavigate={onNavigate} />
-      )}
+  // ── Address data: filter to selected parcel ──
+  const filteredAddresses = useMemo(() => {
+    if (!activeTile?.addresses) return null;
+    if (!selection?.parcelId) return activeTile.addresses;
+    return {
+      ...activeTile.addresses,
+      features: activeTile.addresses.features.filter(f => f.properties.parcelId === selection.parcelId),
+    };
+  }, [activeTile?.addresses, selection?.parcelId]);
 
-      {/* Address points — scoped to selected parcel */}
-      {showAddresses && tile.addresses?.features.length > 0 && (
-        <AddressLayer addresses={tile.addresses} selection={selection} onNavigate={onNavigate} />
-      )}
-    </>
-  );
-}
+  // ── Buildings data: use active tile's buildings when drilled down, otherwise the global buildings ──
+  const displayBuildings = useMemo(() => {
+    if (!showBuildings) return null;
+    if (activeTile?.buildings) return activeTile.buildings;
+    return buildingsData;
+  }, [showBuildings, activeTile?.buildings, buildingsData]);
 
-const DEPTH = { subdivision: 1, plat: 2, parcel: 3, address: 4 };
+  // ── Subdivision fill/line paint per feature ──
+  // MapLibre can't do per-feature JS callbacks, so we add a _color property
+  const coloredSubdivisions = useMemo(() => {
+    if (!subdivisionData) return null;
+    return {
+      ...subdivisionData,
+      features: subdivisionData.features.map(f => ({
+        ...f,
+        properties: {
+          ...f.properties,
+          _color: getSubdivisionColor(f.properties.type),
+          _isActive: selection?.type === 'subdivision' && selection?.id === f.properties.id ? 1 : 0,
+        },
+      })),
+    };
+  }, [subdivisionData, selection?.type, selection?.id]);
 
-// ── Plat layer ────────────────────────────────────────────────────────────
+  // ── POIs: add color property ──
+  const coloredPois = useMemo(() => {
+    if (!pois) return null;
+    return {
+      ...pois,
+      features: pois.features.map(f => ({
+        ...f,
+        properties: {
+          ...f.properties,
+          _color: POI_COLORS[f.properties.group] || POI_COLORS.other,
+        },
+      })),
+    };
+  }, [pois]);
 
-function PlatLayer({ plats, selection, onNavigate }) {
-  const onEachFeature = useCallback((feature, layer) => {
-    const props = feature.properties;
-    layer.on('click', (e) => {
-      if (e.originalEvent) e.originalEvent.stopPropagation();
+  // Building class labels for tooltips
+  const BUILDING_CLASS_LABELS = useMemo(() => ({
+    1: 'Residential', 2: 'Commercial', 3: 'Industrial', 4: 'Government',
+    6: 'Agricultural', 7: 'Religious', 8: 'Education', 11: 'Utility', 12: 'Other',
+  }), []);
+
+  // ── Interactive layer IDs for click handling ──
+  const interactiveLayerIds = useMemo(() => {
+    const ids = [];
+    if (coloredSubdivisions) ids.push('subdivisions-fill');
+    if (activeTile?.plats) ids.push('plats-fill');
+    if (showParcels && filteredParcels?.features?.length) ids.push('parcels-fill');
+    if (showAddresses && filteredAddresses?.features?.length) ids.push('addresses-circle');
+    if (showParks && parks) ids.push('parks-fill');
+    if (showPois && coloredPois) ids.push('pois-circle');
+    if (displayBuildings) ids.push('buildings-extrusion');
+    return ids;
+  }, [coloredSubdivisions, activeTile?.plats, showParcels, filteredParcels, showAddresses, filteredAddresses, showParks, parks, showPois, coloredPois, displayBuildings]);
+
+  // ── Click handler ──
+  const onClick = useCallback((event) => {
+    const features = event.features;
+    if (!features || features.length === 0) {
+      // Clicked empty space → reset to city
+      onNavigate('city', 'root', 'Saratoga Springs');
+      setPopupInfo(null);
+      return;
+    }
+
+    const f = features[0];
+    const layerId = f.layer.id;
+    const props = f.properties;
+
+    if (layerId === 'subdivisions-fill') {
+      onNavigate('subdivision', props.id, props.name);
+      setPopupInfo(null);
+    } else if (layerId === 'plats-fill') {
       onNavigate('plat', props.id, props.name);
-    });
-    layer.bindTooltip(`${props.name}${props.label ? ` (${props.label})` : ''}`, { sticky: true });
-  }, [onNavigate]);
-
-  const style = useCallback((feature) => {
-    const isActive = selection?.platId === feature.properties.id;
-    return isActive ? LAYER_STYLES.platHighlight : LAYER_STYLES.plat;
-  }, [selection?.platId]);
-
-  const key = `plats-${selection?.subdivisionId}-${selection?.platId ?? 'none'}`;
-  return <GeoJSON key={key} data={plats} style={style} onEachFeature={onEachFeature} bubblingMouseEvents={false} />;
-}
-
-// ── Parcel layer ──────────────────────────────────────────────────────────
-
-function ParcelLayer({ parcels, selection, onNavigate }) {
-  const filtered = useMemo(() => {
-    if (!selection?.platId) return parcels;
-    return { ...parcels, features: parcels.features.filter(f => f.properties.platId === selection.platId) };
-  }, [parcels, selection?.platId]);
-
-  const onEachFeature = useCallback((feature, layer) => {
-    const props = feature.properties;
-    layer.on('click', (e) => {
-      if (e.originalEvent) e.originalEvent.stopPropagation();
+      setPopupInfo(null);
+    } else if (layerId === 'parcels-fill') {
       onNavigate('parcel', props.id, props.address || `Parcel ${props.id}`);
-    });
-    layer.bindTooltip(props.address || `Parcel ${props.id}`, { sticky: true });
+      setPopupInfo(null);
+    } else if (layerId === 'addresses-circle') {
+      onNavigate('address', props.id, props.fullAddress || 'Address');
+      setPopupInfo({
+        longitude: event.lngLat.lng,
+        latitude: event.lngLat.lat,
+        type: 'address',
+        props,
+      });
+    } else if (layerId === 'buildings-extrusion') {
+      const cls = BUILDING_CLASS_LABELS[props.class] || 'Building';
+      const name = props.address || props.name || cls;
+      onNavigate('building', props.id, name);
+      setPopupInfo({
+        longitude: event.lngLat.lng,
+        latitude: event.lngLat.lat,
+        type: 'building',
+        props,
+      });
+    } else if (layerId === 'parks-fill') {
+      // Parse amenities back from stringified JSON
+      let amenities = {};
+      try { amenities = JSON.parse(props.amenities || '{}'); } catch {}
+      setPopupInfo({
+        longitude: event.lngLat.lng,
+        latitude: event.lngLat.lat,
+        type: 'park',
+        props: { ...props, amenities },
+      });
+    } else if (layerId === 'pois-circle') {
+      setPopupInfo({
+        longitude: event.lngLat.lng,
+        latitude: event.lngLat.lat,
+        type: 'poi',
+        props,
+      });
+    }
   }, [onNavigate]);
 
-  const style = useCallback((feature) => {
-    const isActive = selection?.parcelId === feature.properties.id;
-    return isActive ? LAYER_STYLES.parcelHighlight : LAYER_STYLES.parcel;
-  }, [selection?.parcelId]);
+  // ── Hover handler (imperative DOM tooltip — no React re-renders) ──
+  const onMouseMove = useCallback((event) => {
+    const tip = tooltipRef.current;
+    const features = event.features;
+    if (!features || features.length === 0) {
+      if (tip) tip.style.display = 'none';
+      if (mapRef.current) mapRef.current.getCanvas().style.cursor = '';
+      return;
+    }
 
-  if (filtered.features.length === 0) return null;
-  const key = `parcels-${selection?.platId}-${selection?.parcelId ?? 'none'}`;
-  return <GeoJSON key={key} data={filtered} style={style} onEachFeature={onEachFeature} bubblingMouseEvents={false} />;
-}
+    if (mapRef.current) mapRef.current.getCanvas().style.cursor = 'pointer';
 
-// ── Address layer ─────────────────────────────────────────────────────────
+    const f = features[0];
+    const layerId = f.layer.id;
+    const props = f.properties;
+    let label = '';
 
-function AddressLayer({ addresses, selection, onNavigate }) {
-  const filtered = useMemo(() => {
-    if (!selection?.parcelId) return addresses;
-    return { ...addresses, features: addresses.features.filter(f => f.properties.parcelId === selection.parcelId) };
-  }, [addresses, selection?.parcelId]);
+    if (layerId === 'subdivisions-fill') {
+      label = props.name || 'Unknown';
+    } else if (layerId === 'plats-fill') {
+      label = `${props.name}${props.label ? ` (${props.label})` : ''}`;
+    } else if (layerId === 'parcels-fill') {
+      label = props.address || `Parcel ${props.id}`;
+    } else if (layerId === 'addresses-circle') {
+      label = props.fullAddress || 'Address';
+    } else if (layerId === 'parks-fill') {
+      label = props.name;
+    } else if (layerId === 'pois-circle') {
+      label = props.name;
+    } else if (layerId === 'buildings-extrusion') {
+      const cls = BUILDING_CLASS_LABELS[props.class] || 'Building';
+      label = props.address || props.name || cls;
+    }
 
-  if (filtered.features.length === 0) return null;
+    if (label && tip) {
+      tip.textContent = label;
+      tip.style.display = 'block';
+      tip.style.left = `${event.point.x}px`;
+      tip.style.top = `${event.point.y - 12}px`;
+    }
+  }, []);
 
-  return (
-    <>
-      {filtered.features.map((feature, i) => {
-        const [lng, lat] = feature.geometry.coordinates;
-        const props = feature.properties;
-        const isActive = selection?.type === 'address' && selection?.id === props.id;
+  const onMouseLeave = useCallback(() => {
+    if (tooltipRef.current) tooltipRef.current.style.display = 'none';
+    if (mapRef.current) mapRef.current.getCanvas().style.cursor = '';
+  }, []);
 
-        return (
-          <CircleMarker
-            key={props.id || i}
-            center={[lat, lng]}
-            radius={isActive ? 8 : 5}
-            fillColor="#fbbf24"
-            fillOpacity={isActive ? 1 : 0.8}
-            color={isActive ? '#fff' : '#f59e0b'}
-            weight={isActive ? 2 : 1}
-            bubblingMouseEvents={false}
-            eventHandlers={{
-              click: (e) => {
-                if (e.originalEvent) e.originalEvent.stopPropagation();
-                onNavigate('address', props.id, props.fullAddress || 'Address');
-              }
-            }}
-          >
-            <Popup>
-              <div style={{ fontFamily: 'Inter, sans-serif' }}>
-                <strong>{props.fullAddress}</strong><br />
-                {props.city} {props.zipCode}<br />
-                <span style={{ color: '#9499b3', fontSize: '12px' }}>
-                  {props.structureType} &middot; {props.pointType}
-                </span>
-              </div>
-            </Popup>
-          </CircleMarker>
-        );
-      })}
-    </>
-  );
-}
-
-// ── Fly to selection ──────────────────────────────────────────────────────
-
-function FlyToSelection({ selection, subdivisions, activeTile }) {
-  const map = useMap();
-  const lastKeyRef = useRef(null);
-
+  // ── Fly to selection ──
   useEffect(() => {
-    const key = selection ? `${selection.type}-${selection.id}` : null;
-    if (key === lastKeyRef.current) return;
-    lastKeyRef.current = key;
-    if (!selection) return;
+    const map = mapRef.current;
+    if (!map) return;
 
-    let bounds = null;
-    const L = require('leaflet');
+    const key = selection ? `${selection.type}-${selection.id}` : null;
+    if (key === lastSelectionKey.current) return;
+    lastSelectionKey.current = key;
+    if (!selection) return;
 
     const sources = {
       subdivision: subdivisions,
       plat: activeTile?.plats,
       parcel: activeTile?.parcels,
+      building: activeTile?.buildings,
       address: activeTile?.addresses,
     };
     const src = sources[selection.type];
@@ -334,26 +284,520 @@ function FlyToSelection({ selection, subdivisions, activeTile }) {
 
     if (selection.type === 'address') {
       const [lng, lat] = feat.geometry.coordinates;
-      map.flyTo([lat, lng], 18, { duration: 0.8 });
+      map.flyTo({ center: [lng, lat], zoom: 18, duration: 800 });
       return;
     }
 
-    bounds = L.geoJSON(feat).getBounds();
-    if (bounds?.isValid()) {
-      map.flyToBounds(bounds, { padding: [50, 50], duration: 0.8, maxZoom: 17 });
+    // Compute bounds from feature geometry
+    const coords = getAllCoordinates(feat.geometry);
+    if (coords.length === 0) return;
+
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    for (const [lng, lat] of coords) {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
     }
-  }, [selection, subdivisions, activeTile, map]);
+
+    map.fitBounds(
+      [[minLng, minLat], [maxLng, maxLat]],
+      { padding: 50, duration: 800, maxZoom: 17 }
+    );
+  }, [selection, subdivisions, activeTile]);
+
+  // Close popup when selection changes
+  useEffect(() => {
+    setPopupInfo(null);
+  }, [selection?.type, selection?.id]);
+
+  // ── WASD + QE + RF keyboard navigation (Cities Skylines style) ──
+  useEffect(() => {
+    const keysDown = new Set();
+    const PAN_SPEED = 0.0004;   // degrees per frame (scales with zoom)
+    const ROTATE_SPEED = 1.2;   // degrees per frame
+    const ZOOM_SPEED = 0.06;    // zoom levels per frame
+    let rafId = null;
+
+    const tick = () => {
+      const map = mapRef.current;
+      if (!map || keysDown.size === 0) { rafId = null; return; }
+
+      const bearing = map.getBearing() * (Math.PI / 180);
+      const zoom = map.getZoom();
+      const center = map.getCenter();
+      // Pan distance scales inversely with zoom (zoomed in = smaller steps)
+      const panDist = PAN_SPEED * Math.pow(2, 14 - zoom);
+
+      let dx = 0, dy = 0, dBearing = 0, dZoom = 0;
+
+      // WASD: pan relative to camera bearing
+      if (keysDown.has('w') || keysDown.has('arrowup'))    dy += 1;
+      if (keysDown.has('s') || keysDown.has('arrowdown'))  dy -= 1;
+      if (keysDown.has('a') || keysDown.has('arrowleft'))  dx -= 1;
+      if (keysDown.has('d') || keysDown.has('arrowright')) dx += 1;
+
+      // Q/E: rotate
+      if (keysDown.has('q')) dBearing -= ROTATE_SPEED;
+      if (keysDown.has('e')) dBearing += ROTATE_SPEED;
+
+      // R/F: zoom
+      if (keysDown.has('r')) dZoom += ZOOM_SPEED;
+      if (keysDown.has('f')) dZoom -= ZOOM_SPEED;
+
+      if (dx !== 0 || dy !== 0) {
+        // Rotate pan vector by current bearing so movement is camera-relative
+        const sinB = Math.sin(-bearing);
+        const cosB = Math.cos(-bearing);
+        const worldDx = (dx * cosB - dy * sinB) * panDist;
+        const worldDy = (dx * sinB + dy * cosB) * panDist;
+        map.setCenter([center.lng + worldDx, center.lat + worldDy]);
+      }
+      if (dBearing !== 0) map.setBearing(map.getBearing() + dBearing);
+      if (dZoom !== 0) map.setZoom(Math.max(1, Math.min(20, zoom + dZoom)));
+
+      rafId = requestAnimationFrame(tick);
+    };
+
+    const onKeyDown = (e) => {
+      // Don't capture when typing in inputs
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      const key = e.key.toLowerCase();
+      if (['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+        e.preventDefault();
+        keysDown.add(key);
+        if (!rafId) rafId = requestAnimationFrame(tick);
+      }
+    };
+
+    const onKeyUp = (e) => {
+      keysDown.delete(e.key.toLowerCase());
+    };
+
+    // Clear keys if window loses focus
+    const onBlur = () => keysDown.clear();
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  const isDrilledDown = !!activeSubdivisionId;
+
+  return (
+    <div className="map-container">
+      <Map
+        ref={mapRef}
+        initialViewState={{
+          longitude: -111.9,
+          latitude: 40.35,
+          zoom: 12,
+          pitch: 45,
+          bearing: -15,
+        }}
+        style={{ width: '100%', height: '100%' }}
+        mapStyle={{
+          version: 8,
+          sources: {
+            'carto-dark': {
+              type: 'raster',
+              tiles: [
+                'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+                'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+                'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+              ],
+              tileSize: 256,
+              attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+            },
+          },
+          layers: [
+            {
+              id: 'carto-dark-layer',
+              type: 'raster',
+              source: 'carto-dark',
+              minzoom: 0,
+              maxzoom: 20,
+            },
+          ],
+        }}
+        interactiveLayerIds={interactiveLayerIds}
+        onClick={onClick}
+        onMouseMove={onMouseMove}
+        onMouseLeave={onMouseLeave}
+      >
+        <NavigationControl position="top-left" showCompass visualizePitch />
+
+        {/* ── Roads ── */}
+        {roads && (
+          <Source id="roads" type="geojson" data={roads}>
+            <Layer
+              id="roads-line"
+              type="line"
+              paint={{
+                'line-color': 'rgba(148, 153, 179, 0.35)',
+                'line-width': 1,
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── Paths ── */}
+        {paths && showPaths && (
+          <Source id="paths" type="geojson" data={paths}>
+            <Layer
+              id="paths-line"
+              type="line"
+              paint={{
+                'line-color': '#fb923c',
+                'line-width': 1.5,
+                'line-opacity': 0.7,
+                'line-dasharray': [3, 2],
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── Parks ── */}
+        {parks && showParks && (
+          <Source id="parks" type="geojson" data={parks}>
+            <Layer
+              id="parks-fill"
+              type="fill"
+              paint={{
+                'fill-color': '#10b981',
+                'fill-opacity': 0.15,
+              }}
+            />
+            <Layer
+              id="parks-outline"
+              type="line"
+              paint={{
+                'line-color': '#059669',
+                'line-width': 1.5,
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ═══ Hierarchy layers (bottom → top): City → Subdivision → Plat → Parcel → Building → Address ═══ */}
+
+        {/* ── City Boundary (broadest, renders lowest) ── */}
+        {cityBoundary && (
+          <Source id="city-boundary" type="geojson" data={cityBoundary}>
+            <Layer
+              id="city-boundary-line"
+              type="line"
+              paint={{
+                'line-color': '#fb7185',
+                'line-width': 2.5,
+                'line-dasharray': [4, 2],
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── Subdivisions ── */}
+        {coloredSubdivisions && (
+          <Source id="subdivisions" type="geojson" data={coloredSubdivisions}>
+            <Layer
+              id="subdivisions-fill"
+              type="fill"
+              paint={{
+                'fill-color': ['get', '_color'],
+                'fill-opacity': isDrilledDown
+                  ? 0.03
+                  : [
+                      'case',
+                      ['==', ['get', '_isActive'], 1], 0.25,
+                      0.12,
+                    ],
+              }}
+            />
+            <Layer
+              id="subdivisions-outline"
+              type="line"
+              layout={{
+                ...(isDrilledDown ? { 'line-cap': 'butt' } : {}),
+              }}
+              paint={{
+                'line-color': ['get', '_color'],
+                'line-width': isDrilledDown
+                  ? 2
+                  : [
+                      'case',
+                      ['==', ['get', '_isActive'], 1], 3,
+                      1.5,
+                    ],
+                ...(isDrilledDown ? { 'line-dasharray': [2, 2] } : {}),
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── Plats ── */}
+        {activeTile?.plats?.features?.length > 0 && (
+          <Source id="plats" type="geojson" data={activeTile.plats}>
+            <Layer
+              id="plats-fill"
+              type="fill"
+              paint={{
+                'fill-color': '#a78bfa',
+                'fill-opacity': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.platId ?? ''],  0.3,
+                  0.15,
+                ],
+              }}
+            />
+            <Layer
+              id="plats-outline"
+              type="line"
+              paint={{
+                'line-color': '#a78bfa',
+                'line-width': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.platId ?? ''], 2.5,
+                  1.2,
+                ],
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── Parcels ── */}
+        {showParcels && filteredParcels?.features?.length > 0 && (
+          <Source id="parcels" type="geojson" data={filteredParcels}>
+            <Layer
+              id="parcels-fill"
+              type="fill"
+              paint={{
+                'fill-color': '#2dd4bf',
+                'fill-opacity': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.parcelId ?? ''], 0.3,
+                  0.12,
+                ],
+              }}
+            />
+            <Layer
+              id="parcels-outline"
+              type="line"
+              paint={{
+                'line-color': '#2dd4bf',
+                'line-width': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.parcelId ?? ''], 2,
+                  0.8,
+                ],
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── 3D Buildings ── */}
+        {displayBuildings && (
+          <Source id="buildings" type="geojson" data={displayBuildings}>
+            <Layer
+              id="buildings-extrusion"
+              type="fill-extrusion"
+              paint={{
+                'fill-extrusion-color': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.buildingId ?? ''], '#00f0ff', // Highlight selection
+                  [
+                    'match', ['get', 'class'],
+                    1, '#34d399',    // Residential - green
+                    2, '#c4a35a',    // Commercial - warm gold
+                    3, '#a0a0a0',    // Industrial - neutral gray
+                    4, '#7c8aff',    // Government - accent blue
+                    7, '#d4a0ff',    // Religious - soft purple
+                    8, '#6bc4a6',    // Education - soft teal
+                    '#8899aa',       // Default
+                  ]
+                ],
+                'fill-extrusion-height': ['get', 'height'],
+                'fill-extrusion-base': 0,
+                'fill-extrusion-opacity': 0.75,
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── Addresses (most granular, renders highest) ── */}
+        {showAddresses && filteredAddresses?.features?.length > 0 && (
+          <Source id="addresses" type="geojson" data={filteredAddresses}>
+            <Layer
+              id="addresses-circle"
+              type="circle"
+              paint={{
+                'circle-radius': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.type === 'address' ? (selection?.id ?? '') : ''], 8,
+                  5,
+                ],
+                'circle-color': '#fbbf24',
+                'circle-opacity': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.type === 'address' ? (selection?.id ?? '') : ''], 1,
+                  0.8,
+                ],
+                'circle-stroke-color': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.type === 'address' ? (selection?.id ?? '') : ''], '#fff',
+                  '#f59e0b',
+                ],
+                'circle-stroke-width': [
+                  'case',
+                  ['==', ['get', 'id'], selection?.type === 'address' ? (selection?.id ?? '') : ''], 2,
+                  1,
+                ],
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── POIs (overlay, always on top) ── */}
+        {coloredPois && showPois && (
+          <Source id="pois" type="geojson" data={coloredPois}>
+            <Layer
+              id="pois-circle"
+              type="circle"
+              paint={{
+                'circle-radius': 6,
+                'circle-color': ['get', '_color'],
+                'circle-opacity': 0.85,
+                'circle-stroke-color': '#fff',
+                'circle-stroke-width': 1,
+              }}
+            />
+          </Source>
+        )}
+
+        {/* Hover tooltip is rendered imperatively via tooltipRef — no React Popup here */}
+
+        {/* ── Click Popup ── */}
+        {popupInfo && (
+          <Popup
+            longitude={popupInfo.longitude}
+            latitude={popupInfo.latitude}
+            closeOnClick={false}
+            onClose={() => setPopupInfo(null)}
+            anchor="bottom"
+            offset={16}
+            className="click-popup"
+          >
+            <PopupContent info={popupInfo} />
+          </Popup>
+        )}
+      </Map>
+
+      {/* Imperative hover tooltip — positioned via DOM, never causes React re-renders */}
+      <div ref={tooltipRef} className="map-hover-tooltip" />
+
+      {/* Layer control panel */}
+      <div
+        className="map-layers-toggle"
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+      >
+        <div className="map-layers-toggle__title">Overlays</div>
+        <label className="map-layers-toggle__item">
+          <input type="checkbox" className="map-layers-toggle__checkbox" checked={showParks} onChange={(e) => setShowParks(e.target.checked)} />
+          <span>Parks</span>
+        </label>
+        <label className="map-layers-toggle__item">
+          <input type="checkbox" className="map-layers-toggle__checkbox" checked={showPaths} onChange={(e) => setShowPaths(e.target.checked)} />
+          <span>Paths</span>
+        </label>
+        <label className="map-layers-toggle__item">
+          <input type="checkbox" className="map-layers-toggle__checkbox" checked={showPois} onChange={(e) => setShowPois(e.target.checked)} />
+          <span>POIs</span>
+        </label>
+        <label className="map-layers-toggle__item">
+          <input type="checkbox" className="map-layers-toggle__checkbox" checked={showBuildings} onChange={(e) => setShowBuildings(e.target.checked)} />
+          <span>Buildings 3D</span>
+        </label>
+      </div>
+
+      <MapLegend
+        activeSubdivisionId={activeSubdivisionId}
+        selection={selection}
+        showParks={showParks}
+        showPaths={showPaths}
+        showPois={showPois}
+        showBuildings={showBuildings}
+      />
+    </div>
+  );
+}
+
+// ── Popup content renderer ────────────────────────────────────────────────
+
+function PopupContent({ info }) {
+  const { type, props } = info;
+
+  if (type === 'address') {
+    return (
+      <div className="popup-content">
+        <strong>{props.fullAddress}</strong>
+        <div className="popup-content__meta">{props.city} {props.zipCode}</div>
+        <div className="popup-content__detail">{props.structureType} · {props.pointType}</div>
+      </div>
+    );
+  }
+
+  if (type === 'park') {
+    const amenitiesList = Object.entries(props.amenities || {})
+      .filter(([, v]) => v)
+      .map(([k]) => k.charAt(0).toUpperCase() + k.slice(1))
+      .join(', ');
+
+    return (
+      <div className="popup-content">
+        <h4 className="popup-content__park-name">{props.name}</h4>
+        {props.address && <div className="popup-content__meta">{props.address}</div>}
+        <div className="popup-content__detail-grid">
+          {props.acres && <div><strong>Acres:</strong> {props.acres}</div>}
+          {props.status && <div><strong>Status:</strong> {props.status}</div>}
+          {amenitiesList && <div className="popup-content__amenities"><strong>Amenities:</strong> {amenitiesList}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'poi') {
+    const catFormatted = (props.category || '').replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return (
+      <div className="popup-content">
+        <span className="popup-content__poi-category">{catFormatted}</span>
+        <h4 className="popup-content__poi-name">{props.name}</h4>
+        {props.address && <div className="popup-content__meta">{props.address}</div>}
+        {props.details && <div className="popup-content__detail">{props.details}</div>}
+      </div>
+    );
+  }
 
   return null;
 }
 
 // ── Map legend ────────────────────────────────────────────────────────────
 
-function MapLegend({ activeSubdivisionId, selection, showParks, showPaths, showPois }) {
+function MapLegend({ activeSubdivisionId, selection, showParks, showPaths, showPois, showBuildings }) {
   const depth = DEPTH[selection?.type] ?? 0;
 
   return (
-    <div 
+    <div
       className="map-legend"
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
@@ -386,6 +830,9 @@ function MapLegend({ activeSubdivisionId, selection, showParks, showPaths, showP
       {showParks && (
         <LegendItem color="rgba(16, 185, 129, 0.15)" border="1px solid #059669" label="Parks" />
       )}
+      {showBuildings && (
+        <LegendItem color="rgba(167, 139, 250, 0.6)" border="1px solid #a78bfa" label="Buildings 3D" />
+      )}
       {showPois && (
         <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '8px', paddingTop: '8px' }}>
           <div className="map-legend__title" style={{ fontSize: '10px', marginBottom: '4px' }}>POI Groups</div>
@@ -410,97 +857,16 @@ function LegendItem({ color, border, label, line, circle }) {
   );
 }
 
-// ── Parks & POIs Layer Components ──────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-function ParksLayer({ data }) {
-  const onEachFeature = useCallback((feature, layer) => {
-    const props = feature.properties;
-    const amenitiesList = Object.entries(props.amenities || {})
-      .filter(([_, value]) => value)
-      .map(([key]) => key.charAt(0).toUpperCase() + key.slice(1))
-      .join(', ');
-
-    const popupContent = `
-      <div style="font-family: 'Inter', sans-serif; min-width: 200px; color: #e8eaf0;">
-        <h4 style="margin: 0 0 6px 0; color: #34d399; font-weight: 600; font-size: 14px;">${props.name}</h4>
-        ${props.address ? `<p style="margin: 0 0 8px 0; font-size: 11px; color: #9499b3;">${props.address}</p>` : ''}
-        <div style="border-top: 1px solid rgba(148, 153, 179, 0.12); padding-top: 6px; font-size: 11px;">
-          ${props.acres ? `<div style="margin-bottom: 4px;"><strong>Acres:</strong> ${props.acres}</div>` : ''}
-          ${props.status ? `<div style="margin-bottom: 4px;"><strong>Status:</strong> ${props.status}</div>` : ''}
-          ${amenitiesList ? `<div style="margin-top: 6px; color: #34d399;"><strong>Amenities:</strong> ${amenitiesList}</div>` : ''}
-        </div>
-      </div>
-    `;
-
-    layer.on('click', (e) => {
-      if (e.originalEvent) e.originalEvent.stopPropagation();
-    });
-    layer.bindPopup(popupContent);
-    layer.bindTooltip(props.name, { sticky: true, className: 'park-tooltip' });
-  }, []);
-
-  return <GeoJSON data={data} style={LAYER_STYLES.park} onEachFeature={onEachFeature} bubblingMouseEvents={false} />;
-}
-
-function PoisLayer({ data }) {
-  const L = typeof window !== 'undefined' ? require('leaflet') : null;
-
-  const pointToLayer = useCallback((feature, latlng) => {
-    if (!L) return null;
-    const group = feature.properties.group;
-    let color = '#9499b3';
-    
-    if (group === 'education') color = '#a78bfa';
-    else if (group === 'civic_community') color = '#fb7185';
-    else if (group === 'retail_food') color = '#fbbf24';
-    else if (group === 'healthcare') color = '#2dd4bf';
-
-    return L.circleMarker(latlng, {
-      radius: 6,
-      fillColor: color,
-      fillOpacity: 0.85,
-      color: '#fff',
-      weight: 1,
-    });
-  }, [L]);
-
-  const onEachFeature = useCallback((feature, layer) => {
-    const props = feature.properties;
-    const catFormatted = props.category.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
-    
-    const popupContent = `
-      <div style="font-family: 'Inter', sans-serif; min-width: 180px; color: #e8eaf0;">
-        <span style="font-size: 9px; text-transform: uppercase; font-weight: 700; color: #7c8aff; display: inline-block; margin-bottom: 2px;">
-          ${catFormatted}
-        </span>
-        <h4 style="margin: 0 0 6px 0; color: #e8eaf0; font-weight: 600; font-size: 13px;">${props.name}</h4>
-        ${props.address ? `<p style="margin: 0 0 6px 0; font-size: 11px; color: #9499b3;">${props.address}</p>` : ''}
-        ${props.details ? `
-          <div style="border-top: 1px solid rgba(148, 153, 179, 0.12); padding-top: 6px; font-size: 10px; color: #9499b3;">
-            ${props.details}
-          </div>
-        ` : ''}
-      </div>
-    `;
-
-    layer.on('click', (e) => {
-      if (e.originalEvent) e.originalEvent.stopPropagation();
-    });
-    layer.bindPopup(popupContent);
-    layer.bindTooltip(props.name, { sticky: true });
-  }, []);
-
-  if (!L) return null;
-  return <GeoJSON data={data} pointToLayer={pointToLayer} onEachFeature={onEachFeature} bubblingMouseEvents={false} />;
-}
-
-// ── Map Events handler for click outside reset ─────────────────────────────
-
-function MapClickHandler({ onMapClick }) {
-  useMapEvents({
-    click() {
-      onMapClick();
-    },
-  });
-  return null;
+/** Recursively extract all [lng, lat] coordinates from a GeoJSON geometry. */
+function getAllCoordinates(geometry) {
+  if (!geometry) return [];
+  const { type, coordinates } = geometry;
+  if (type === 'Point') return [coordinates];
+  if (type === 'MultiPoint' || type === 'LineString') return coordinates;
+  if (type === 'MultiLineString' || type === 'Polygon') return coordinates.flat();
+  if (type === 'MultiPolygon') return coordinates.flat(2);
+  if (type === 'GeometryCollection') return geometry.geometries.flatMap(getAllCoordinates);
+  return [];
 }

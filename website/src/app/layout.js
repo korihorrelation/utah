@@ -1,7 +1,7 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'Saratoga Springs GIS Explorer',
+  title: 'Saratoga Springs Map',
   description: 'Interactive map and hierarchy explorer for Saratoga Springs, Utah — browse subdivisions, plats, parcels, and addresses.',
 };
 

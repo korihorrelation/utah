@@ -6,7 +6,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
  * Central hook for hierarchy data loading, navigation, and tree expansion state.
  *
  * Navigation model:
- *   - selection: { type, id, subdivisionId?, platId?, parcelId? }
+ *   - selection: { type, id, subdivisionId?, platId?, parcelId?, buildingId? }
  *     Represents the currently focused item. The optional parent IDs
  *     record the full ancestry so any component can check containment.
  *   - expandedNodes: Set of tree‑node keys that are open in the sidebar.
@@ -166,9 +166,20 @@ export function useHierarchy() {
           if (parcel.name && parcel.name.toLowerCase().includes(q)) {
             results.push({ type: 'parcel', id: parcel.id, name: parcel.name, context: `${sub.name} › ${plat.name}` });
           }
-          for (const addr of parcel.children || []) {
-            if (addr.name && addr.name.toLowerCase().includes(q)) {
-              results.push({ type: 'address', id: addr.id, name: addr.name, context: `${sub.name} › ${plat.name}` });
+          for (const child of parcel.children || []) {
+            if (child.type === 'building') {
+              if (child.name && child.name.toLowerCase().includes(q)) {
+                results.push({ type: 'building', id: child.id, name: child.name, context: `${sub.name} › ${parcel.name}` });
+              }
+              for (const addr of child.children || []) {
+                if (addr.name && addr.name.toLowerCase().includes(q)) {
+                  results.push({ type: 'address', id: addr.id, name: addr.name, context: `${sub.name} › ${plat.name}` });
+                }
+              }
+            } else if (child.type === 'address') {
+              if (child.name && child.name.toLowerCase().includes(q)) {
+                results.push({ type: 'address', id: child.id, name: child.name, context: `${sub.name} › ${plat.name}` });
+              }
             }
           }
           if (results.length >= 50) break;
@@ -236,18 +247,49 @@ function resolveContext(hierarchy, type, id) {
       }
 
       for (const parcel of plat.children || []) {
-        if (type === 'address') {
-          const addr = (parcel.children || []).find(a => a.id === id);
-          if (addr) {
+        // Search for building or address among parcel's children
+        for (const child of parcel.children || []) {
+          if (type === 'building' && child.type === 'building' && child.id === id) {
             return {
-              ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id },
+              ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id, buildingId: id },
               crumbs: [
                 { type: 'subdivision', id: sub.id, name: sub.name },
                 { type: 'plat', id: plat.id, name: plat.name },
                 { type: 'parcel', id: parcel.id, name: parcel.name },
               ],
-              expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`, `parcel-${parcel.id}`],
+              expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`, `parcel-${parcel.id}`, `building-${id}`],
             };
+          }
+
+          if (type === 'address') {
+            // Address directly under parcel
+            if (child.type === 'address' && child.id === id) {
+              return {
+                ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id },
+                crumbs: [
+                  { type: 'subdivision', id: sub.id, name: sub.name },
+                  { type: 'plat', id: plat.id, name: plat.name },
+                  { type: 'parcel', id: parcel.id, name: parcel.name },
+                ],
+                expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`, `parcel-${parcel.id}`],
+              };
+            }
+            // Address under a building
+            if (child.type === 'building') {
+              const addr = (child.children || []).find(a => a.id === id);
+              if (addr) {
+                return {
+                  ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id, buildingId: child.id },
+                  crumbs: [
+                    { type: 'subdivision', id: sub.id, name: sub.name },
+                    { type: 'plat', id: plat.id, name: plat.name },
+                    { type: 'parcel', id: parcel.id, name: parcel.name },
+                    { type: 'building', id: child.id, name: child.name },
+                  ],
+                  expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`, `parcel-${parcel.id}`, `building-${child.id}`],
+                };
+              }
+            }
           }
         }
       }

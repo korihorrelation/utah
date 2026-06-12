@@ -21,4 +21,4 @@ raw_data/VistaBallotAreas_117520236457726803.zip
 # Website
 website/node_modules/
 website/.next/
-website/public/data/
+# website/public/data/

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { useHierarchy } from './hooks/useHierarchy';
 import BreadcrumbBar from './components/BreadcrumbBar';
@@ -42,6 +42,26 @@ export default function HomePage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // ── Escape key listener: go back a layer in hierarchy ──
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Don't capture when typing in inputs
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === 'Escape') {
+        if (drillPath.length > 1) {
+          e.preventDefault();
+          const parent = drillPath[drillPath.length - 2];
+          navigateTo(parent.type, parent.id, parent.name);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [drillPath, navigateTo]);
+
   if (loading) {
     return (
       <div className="app-layout">
@@ -62,27 +82,12 @@ export default function HomePage() {
     <div className="app-layout">
       {/* Header */}
       <header className="app-header" id="app-header">
-        <button
-          className="mobile-toggle"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          aria-label="Toggle sidebar"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 12h18M3 6h18M3 18h18" />
-          </svg>
-        </button>
-
         <div className="app-header__logo">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
           </svg>
           <div>
-            <div className="app-header__title">Saratoga Springs GIS Explorer</div>
-            <div className="app-header__subtitle">
-              {hierarchy
-                ? `${hierarchy.subdivisionCount} subdivisions · ${hierarchy.totalParcels?.toLocaleString()} parcels · ${hierarchy.totalAddresses?.toLocaleString()} addresses`
-                : 'Loading...'}
-            </div>
+            <div className="app-header__title">Saratoga Springs Map</div>
           </div>
         </div>
 

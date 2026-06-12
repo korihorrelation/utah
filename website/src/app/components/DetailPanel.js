@@ -59,6 +59,24 @@ function getDetails(selection, activeTile, hierarchy) {
           { label: 'Label', value: feat.properties.label },
           { label: 'Acres', value: feat.properties.acres?.toFixed(2) },
           { label: 'Subdivision', value: feat.properties.subdivision },
+          { label: 'Land Use (Majority)', value: feat.properties.landUse },
+        ],
+      };
+    }
+
+    case 'building': {
+      if (!activeTile?.buildings) return null;
+      const feat = activeTile.buildings.features.find(f => f.properties.id === selection.id);
+      if (!feat) return null;
+      return {
+        type: 'Building',
+        title: feat.properties.address || feat.properties.name || feat.properties.classLabel || 'Building',
+        fields: [
+          { label: 'Building Type', value: feat.properties.classLabel },
+          { label: 'Estimated Height', value: feat.properties.height ? `${feat.properties.height.toFixed(1)} m` : null },
+          { label: 'Stories', value: feat.properties.stories },
+          { label: 'Year Built', value: feat.properties.yearBuilt },
+          { label: 'Parent Parcel ID', value: feat.properties.parcelId },
         ],
       };
     }
@@ -75,6 +93,7 @@ function getDetails(selection, activeTile, hierarchy) {
           { label: 'Owner', value: feat.properties.owner },
           { label: 'Acreage', value: feat.properties.acreage?.toFixed(3) },
           { label: 'Market Value', value: feat.properties.marketValue ? `$${Number(feat.properties.marketValue).toLocaleString()}` : null },
+          { label: 'Land Use (Majority)', value: feat.properties.landUse },
         ],
       };
     }

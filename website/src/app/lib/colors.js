@@ -21,6 +21,7 @@ const ZONING_COLORS = {
   // Services/Civic (Purple/Indigo/Slate)
   'School': '#6366f1',             // Indigo (Educational Service)
   'CommunityPlan': '#64748b',      // Slate Gray (Civic Service)
+  'Religious': '#fca5a5',          // Light Red
   'Unassigned': '#475569',         // Cool Gray
 };
 
@@ -53,13 +54,17 @@ export function getSubdivisionCategory(type) {
     case 'Minor Subdivision':
     case 'MDA':
     case 'Multi Familyi':
-      return 'Residential';
+      return 'Residential Communities';
     case 'Commercial':
     case 'RV Camp':
-    case 'Mixed Use':
       return 'Commercial';
+    case 'Mixed Use':
+      return 'Mixed Housing';
     case 'School':
     case 'CommunityPlan':
+      return 'Public';
+    case 'Religious':
+      return 'Religious';
     default:
       return 'Public';
   }

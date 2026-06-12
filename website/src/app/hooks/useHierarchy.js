@@ -23,6 +23,7 @@ export function useHierarchy() {
   const [paths, setPaths] = useState(null);
   const [parks, setParks] = useState(null);
   const [pois, setPois] = useState(null);
+  const [residentialAddresses, setResidentialAddresses] = useState(null);
 
   // ── Drill‑down tile ──
   const [activeTile, setActiveTile] = useState(null);
@@ -48,7 +49,7 @@ export function useHierarchy() {
   useEffect(() => {
     (async () => {
       try {
-        const [hierRes, subdivRes, boundaryRes, roadsRes, pathsRes, parksRes, poisRes] = await Promise.all([
+        const [hierRes, subdivRes, boundaryRes, roadsRes, pathsRes, parksRes, poisRes, heatmapRes] = await Promise.all([
           fetch('/data/hierarchy.json'),
           fetch('/data/subdivisions.json'),
           fetch('/data/city_boundary.json'),
@@ -56,9 +57,10 @@ export function useHierarchy() {
           fetch('/data/paths.json'),
           fetch('/data/parks.json'),
           fetch('/data/pois.json'),
+          fetch('/data/residential_addresses.json'),
         ]);
-        const [hierData, subdivData, boundaryData, roadsData, pathsData, parksData, poisData] = await Promise.all([
-          hierRes.json(), subdivRes.json(), boundaryRes.json(), roadsRes.json(), pathsRes.json(), parksRes.json(), poisRes.json(),
+        const [hierData, subdivData, boundaryData, roadsData, pathsData, parksData, poisData, heatmapData] = await Promise.all([
+          hierRes.json(), subdivRes.json(), boundaryRes.json(), roadsRes.json(), pathsRes.json(), parksRes.json(), poisRes.json(), heatmapRes.json(),
         ]);
         setHierarchy(hierData);
         setSubdivisions(subdivData);
@@ -67,6 +69,7 @@ export function useHierarchy() {
         setPaths(pathsData);
         setParks(parksData);
         setPois(poisData);
+        setResidentialAddresses(heatmapData);
       } catch (err) {
         console.error('Failed to load initial data:', err);
       } finally {
@@ -192,7 +195,7 @@ export function useHierarchy() {
   }, [hierarchy]);
 
   return {
-    hierarchy, subdivisions, cityBoundary, roads, paths, parks, pois,
+    hierarchy, subdivisions, cityBoundary, roads, paths, parks, pois, residentialAddresses,
     activeTile, activeSubdivisionId, selection, drillPath,
     loading, tileLoading, searchQuery, searchResults, expandedNodes,
     navigateTo, performSearch,

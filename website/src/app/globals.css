@@ -837,3 +837,17 @@ html, body {
   transform: rotate(-45deg) translate(0.5px, -1px);
 }
 
+/* ─── Subdivision Toggle Icons ─── */
+.tree-node__icon-toggle .tree-node__icon-eye-hover {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tree-node__icon-toggle:hover .tree-node__icon-eye-hover {
+  opacity: 1;
+}
+
+

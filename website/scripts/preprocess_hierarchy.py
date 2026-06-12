@@ -14,6 +14,13 @@ import pandas as pd
 import numpy as np
 from shapely.geometry import mapping
 
+from pipeline.classifiers import classify_all_subdivisions
+from pipeline.config import load_classification_rules
+from pipeline.filters import apply_filters
+from pipeline.joiners import (join_land_use, join_plats_to_subdivisions,
+                               join_parcels_to_plats, join_addresses_to_parcels,
+                               join_buildings_to_parcels, join_pois_to_buildings)
+
 # ──────────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -118,10 +125,13 @@ def write_json(data, path):
     print(f"  Wrote {path} ({size_kb:.0f} KB)")
 
 
-# ────────────────────────────────────────────────────────────────────────────────────
 
 def main():
     print("=== Preprocessing GIS Hierarchy ===\n")
+
+    # ── Load classification rules ──
+    rules = load_classification_rules()
+    print("Loaded classification rules from YAML.")
 
     # ── Load layers ──
     print("Loading layers...")
@@ -159,127 +169,28 @@ def main():
     print(f"  Paths: {len(paths)}")
     print(f"  Land Use: {len(landuse)}")
 
-    print("\nFiltering layers (LEHI and tiny geometries)...")
-    def filter_lehi(gdf):
-        mask = pd.Series(True, index=gdf.index)
-        for col in gdf.select_dtypes(include=['object', 'string']).columns:
-            mask = mask & (~gdf[col].astype(str).str.contains("LEHI, UT", case=False, na=False))
-        return gdf[mask].copy()
+    city_geom = city_boundary.geometry.unary_union
 
-    def filter_small_geoms(gdf, min_area_sqm=5.0, min_pp=0.01):
-        if gdf.empty or not gdf.geometry.geom_type.isin(['Polygon', 'MultiPolygon']).any():
-            return gdf
-        is_poly = gdf.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])
-        proj_geoms = gdf[is_poly].geometry.to_crs(epsg=3566)
-        areas = proj_geoms.area
-        perimeters = proj_geoms.length
-        # Protect against div by zero
-        perimeters = perimeters.replace(0, np.nan)
-        pp_scores = (4 * np.pi * areas) / (perimeters ** 2)
-        
-        valid_poly_mask = (areas >= min_area_sqm) & (pp_scores >= min_pp)
-        valid_mask = pd.Series(True, index=gdf.index)
-        valid_mask.loc[is_poly] = valid_poly_mask
-        
-        return gdf[valid_mask].copy()
+    layers = {
+        "subdivisions": subdivisions, "plats": plats, "parcels": parcels,
+        "buildings": buildings, "addresses": addresses, "roads": roads, "paths": paths,
+    }
+    layers = apply_filters(layers, city_geom, rules)
+    subdivisions = layers["subdivisions"]
+    plats = layers["plats"]
+    parcels = layers["parcels"]
+    buildings = layers["buildings"]
+    addresses = layers["addresses"]
+    roads = layers["roads"]
+    paths = layers["paths"]
+    # ── Land use joins ──
+    plats = join_land_use(plats, landuse, label="Plats")
+    parcels = join_land_use(parcels, landuse, label="Parcels")
 
-    subdivisions = filter_lehi(filter_small_geoms(subdivisions))
-    plats = filter_lehi(filter_small_geoms(plats))
-    parcels = filter_lehi(filter_small_geoms(parcels))
-    buildings = filter_lehi(filter_small_geoms(buildings, min_area_sqm=1.0))
-    addresses = filter_lehi(addresses)
-
-    print(f"  After filter Subdivisions: {len(subdivisions)}")
-    print(f"  After filter Plats: {len(plats)}")
-    print(f"  After filter Parcels: {len(parcels)}")
-    print(f"  After filter Addresses: {len(addresses)}")
-    print(f"  After filter Buildings: {len(buildings)}")
-
-    # Match plats to majority Land Use
-    print("Matching Plats to majority Land Use...")
-    plats_centroids = plats.copy()
-    plats_centroids["geometry"] = plats_centroids.geometry.centroid
-    plats_sj = gpd.sjoin(plats_centroids, landuse[["LANDUSEDESC", "geometry"]], how="left", predicate="within")
-    plats_sj = plats_sj[~plats_sj.index.duplicated(keep="first")]
-    plats["landUse"] = plats_sj["LANDUSEDESC"]
-
-    # Match parcels to majority Land Use
-    print("Matching Parcels to majority Land Use...")
-    parcels_centroids = parcels.copy()
-    parcels_centroids["geometry"] = parcels_centroids.geometry.centroid
-    parcels_sj = gpd.sjoin(parcels_centroids, landuse[["LANDUSEDESC", "geometry"]], how="left", predicate="within")
-    parcels_sj = parcels_sj[~parcels_sj.index.duplicated(keep="first")]
-    parcels["landUse"] = parcels_sj["LANDUSEDESC"]
-
-    # ── Build hierarchy: Plat -> Subdivision ──
-    print("\nJoining Plat -> Subdivision...")
-    plats["_sub_id"] = None
-    subdiv_id_set = set(subdivisions["ID"].dropna().unique())
-
-    for idx, row in plats.iterrows():
-        sub_id = row.get("SubID")
-        if pd.notna(sub_id) and int(sub_id) in subdiv_id_set:
-            plats.at[idx, "_sub_id"] = int(sub_id)
-
-    matched = plats["_sub_id"].notna().sum()
-    print(f"  Attribute-matched: {matched}/{len(plats)}")
-
-    unmatched_mask = plats["_sub_id"].isna()
-    if unmatched_mask.any():
-        unmatched_plats = plats[unmatched_mask].copy()
-        unmatched_plats["_centroid"] = unmatched_plats.geometry.centroid
-        unmatched_points = unmatched_plats.set_geometry("_centroid")
-
-        spatial_join = gpd.sjoin(
-            unmatched_points[["_centroid", "geometry"]],
-            subdivisions[["ID", "geometry"]],
-            how="left",
-            predicate="within"
-        )
-        for plat_idx, sj_row in spatial_join.iterrows():
-            if pd.notna(sj_row.get("ID")):
-                plats.at[plat_idx, "_sub_id"] = int(sj_row["ID"])
-
-        newly_matched = plats["_sub_id"].notna().sum() - matched
-        print(f"  Spatial-matched: {newly_matched} additional")
-
-    # ── Build hierarchy: Parcel -> Plat ──
-    print("\nJoining Parcel -> Plat (spatial centroid-in-polygon)...")
-    parcels["_parcel_idx"] = parcels.index
-    parcel_centroids = parcels.copy()
-    parcel_centroids["_centroid"] = parcel_centroids.geometry.centroid
-    parcel_centroids = parcel_centroids.set_geometry("_centroid")
-
-    plats["_plat_oid"] = plats["OBJECTID"]
-    spatial_p2pl = gpd.sjoin(
-        parcel_centroids[["_centroid", "_parcel_idx"]],
-        plats[["_plat_oid", "geometry"]],
-        how="left",
-        predicate="within"
-    )
-    spatial_p2pl = spatial_p2pl[~spatial_p2pl.index.duplicated(keep="first")]
-
-    parcels["_plat_oid"] = None
-    for idx, row in spatial_p2pl.iterrows():
-        if pd.notna(row.get("_plat_oid")):
-            parcels.at[idx, "_plat_oid"] = int(row["_plat_oid"])
-
-    # ── Build hierarchy: Address -> Parcel ──
-    print("\nJoining Address -> Parcel (ParcelID)...")
-    parcel_lookup = {}
-    for idx, row in parcels.iterrows():
-        pid = row.get("PARCELID")
-        if pid:
-            parcel_lookup[str(pid)] = idx
-
-    addresses["_parcel_idx"] = None
-    for idx, row in addresses.iterrows():
-        pid = row.get("ParcelID")
-        if pid and str(pid) in parcel_lookup:
-            addresses.at[idx, "_parcel_idx"] = parcel_lookup[str(pid)]
-
-    addr_matched = addresses["_parcel_idx"].notna().sum()
-    print(f"  Matched: {addr_matched}/{len(addresses)}")
+    # ── Build hierarchy joins ──
+    plats = join_plats_to_subdivisions(plats, subdivisions)
+    parcels = join_parcels_to_plats(parcels, plats)
+    addresses = join_addresses_to_parcels(addresses, parcels)
 
     # ── Create Israel Canyon custom subdivision ──
     print("\nCreating Israel Canyon subdivision...")
@@ -391,8 +302,73 @@ def main():
         return pd.isna(sub_id)
 
     unassigned_mask = parcels.apply(is_parcel_unassigned, axis=1)
+
+    # ── Match unassigned parcels to existing subdivisions by SUB_NAME ──
+    print("Matching unassigned parcels to existing subdivisions by SUB_NAME...")
+    sub_name_lookup = {str(row["NAME"]).strip().lower(): int(row["ID"]) for _, row in subdivisions.iterrows()}
+    
+    import re
+    def clean_sub_name(sub_name):
+        s = str(sub_name).strip().lower()
+        s = re.sub(r'[\s,]+(plat|phase|ph|road church)[\s\w]*$', '', s)
+        s = re.sub(r'[\s,]+plat[\s\w]*$', '', s)
+        s = re.sub(r'[\s,]+phase[\s\w]*$', '', s)
+        return s.strip()
+
+    name_matched_count = 0
+    new_plat_rows_from_unassigned = []
+    base_virtual_plat_oid = 7000000
+    
+    for p_idx, p_row in parcels[unassigned_mask].iterrows():
+        sub_name_val = p_row.get("SUB_NAME")
+        if pd.isna(sub_name_val) or not str(sub_name_val).strip():
+            continue
+            
+        clean_name = clean_sub_name(sub_name_val)
+        if clean_name in sub_name_lookup:
+            matched_sub_id = sub_name_lookup[clean_name]
+            
+            sub_plats = plats[plats["_sub_id"] == matched_sub_id]
+            best_plat_oid = None
+            
+            sub_name_val_lower = str(sub_name_val).lower()
+            for _, plat_row in sub_plats.iterrows():
+                plat_name = str(plat_row.get("Name") or "").lower()
+                plat_label = str(plat_row.get("Plat") or "").lower()
+                if plat_name in sub_name_val_lower or (plat_label and f"plat {plat_label}" in sub_name_val_lower) or (plat_label and f"phase {plat_label}" in sub_name_val_lower):
+                    best_plat_oid = int(plat_row["OBJECTID"])
+                    break
+            
+            if best_plat_oid is None:
+                if len(sub_plats) > 0:
+                    best_plat_oid = int(sub_plats.iloc[0]["OBJECTID"])
+                else:
+                    best_plat_oid = base_virtual_plat_oid + p_idx
+                    new_plat_rows_from_unassigned.append({
+                        "OBJECTID": best_plat_oid,
+                        "Name": f"Plat for {sub_name_val.strip().title()}",
+                        "label": "A",
+                        "Acres": safe_value(p_row.get("ACREAGE")),
+                        "SubID": matched_sub_id,
+                        "_sub_id": matched_sub_id,
+                        "landUse": p_row.get("landUse"),
+                        "geometry": p_row.geometry
+                    })
+            
+            parcels.at[p_idx, "_plat_oid"] = best_plat_oid
+            if best_plat_oid >= base_virtual_plat_oid:
+                plat_sub_lookup[best_plat_oid] = matched_sub_id
+            name_matched_count += 1
+
+    if len(new_plat_rows_from_unassigned) > 0:
+        new_plat_df = gpd.GeoDataFrame(new_plat_rows_from_unassigned, crs=plats.crs)
+        plats = pd.concat([plats, new_plat_df], ignore_index=True)
+        print(f"  Created {len(new_plat_rows_from_unassigned)} virtual plats for name-matched unassigned parcels.")
+
+    # Re-evaluate unassigned_mask after matches have been assigned
+    unassigned_mask = parcels.apply(is_parcel_unassigned, axis=1)
     unassigned_parcels_proj = parcels_proj[unassigned_mask].copy()
-    print(f"  Total unassigned parcels initially: {len(unassigned_parcels_proj)}")
+    print(f"  Name-matched and assigned {name_matched_count} parcels to existing subdivisions. Remaining unassigned: {len(unassigned_parcels_proj)}")
 
     # Group by cleaned owner name
     unassigned_parcels_proj["owner_clean"] = unassigned_parcels_proj["OWNER_NAME"].fillna("").str.strip().str.upper()
@@ -544,7 +520,11 @@ def main():
             orig_p_row = parcels.loc[p_idx]
             parcel_id = orig_p_row.get("PARCELID")
             site_addr = orig_p_row.get("SITE_FULL_")
-            p_name = site_addr or f"Parcel {parcel_id}"
+            sub_name_val = orig_p_row.get("SUB_NAME")
+            if pd.notna(sub_name_val) and str(sub_name_val).strip():
+                p_name = str(sub_name_val).strip().title()
+            else:
+                p_name = site_addr or f"Parcel {parcel_id}"
             land_use_val = orig_p_row.get("landUse") or ""
 
             # Categorize TYPE
@@ -592,7 +572,11 @@ def main():
             orig_p_row = parcels.loc[p_idx]
             parcel_id = orig_p_row.get("PARCELID")
             site_addr = orig_p_row.get("SITE_FULL_")
-            p_name = site_addr or f"Parcel {parcel_id}"
+            sub_name_val = orig_p_row.get("SUB_NAME")
+            if pd.notna(sub_name_val) and str(sub_name_val).strip():
+                p_name = str(sub_name_val).strip().title()
+            else:
+                p_name = site_addr or f"Parcel {parcel_id}"
             plat_oid = int(6000000 + p_idx)
             
             new_plat_rows.append({
@@ -620,56 +604,12 @@ def main():
         print(f"  Appended {len(new_plat_rows)} plats.")
 
 
-    # ── Build hierarchy: Building -> Parcel (spatial join) ──
-    print("\nJoining Building -> Parcel (spatial centroid-in-polygon)...")
+    # ── Build hierarchy: Building → Parcel + POI matching ──
+    buildings = join_buildings_to_parcels(buildings, parcels)
+    buildings = join_pois_to_buildings(buildings)
 
-    # Estimate heights from BUILDINGCL
-    buildings["_height"] = buildings["BUILDINGCL"].map(BUILDING_CLASS_HEIGHTS).fillna(8.0)
-    # Scale slightly by footprint area for variety
-    if "SHAPE_Area" in buildings.columns:
-        areas = buildings["SHAPE_Area"].fillna(0)
-        area_factor = 1.0 + 0.1 * np.clip((areas - areas.median()) / (areas.std() + 1), -1, 1)
-        buildings["_height"] = buildings["_height"] * area_factor
-        buildings["_height"] = buildings["_height"].round(1)
-
-    buildings["_bldg_idx"] = buildings.index
-    bldg_centroids = buildings.copy()
-    bldg_centroids["_centroid"] = bldg_centroids.geometry.centroid
-    bldg_centroids = bldg_centroids.set_geometry("_centroid")
-
-    spatial_b2p = gpd.sjoin(
-        bldg_centroids[["_centroid", "_bldg_idx"]],
-        parcels[["geometry"]],
-        how="left",
-        predicate="within"
-    )
-    spatial_b2p = spatial_b2p[~spatial_b2p.index.duplicated(keep="first")]
-
-    buildings["_parcel_idx"] = None
-    for idx, row in spatial_b2p.iterrows():
-        if pd.notna(row.get("index_right")):
-            buildings.at[idx, "_parcel_idx"] = int(row["index_right"])
-
-    bldg_matched = buildings["_parcel_idx"].notna().sum()
-    print(f"  Matched: {bldg_matched}/{len(buildings)}")
-
-    # ── Match close POIs to buildings (<12 meters) ──
-    print("\nMatching POIs to buildings (<12 meters)...")
-    pois_path = os.path.join(OUTPUT_DIR, "pois.json")
-    if os.path.exists(pois_path):
-        pois = gpd.read_file(pois_path)
-        if len(pois) > 0:
-            pois_proj = pois.to_crs(epsg=3566)
-            buildings_proj = buildings.to_crs(epsg=3566)
-            for idx, row in pois_proj.iterrows():
-                poi_geom = row.geometry
-                distances = buildings_proj.distance(poi_geom)
-                min_dist = distances.min()
-                if min_dist < 12.0:
-                    nearest_idx = distances.idxmin()
-                    poi_name = row.get("name")
-                    print(f"  POI '{poi_name}' is {min_dist:.1f}m from building. Assigning name.")
-                    buildings.at[nearest_idx, "NAME"] = poi_name
+    # ── Compute subdivision categories ──
+    classify_all_subdivisions(subdivisions, plats, parcels, rules)
 
     # ── Simplify geometries (Disabled) ──
     print("\nSimplifying geometries (disabled)...")
@@ -688,7 +628,16 @@ def main():
         "features": city_features
     }, os.path.join(OUTPUT_DIR, "city_boundary.json"))
 
-    # â”€â”€ Export subdivisions â”€â”€
+    # ── Export residential addresses for heatmap ──
+    print("Exporting residential addresses for heatmap...")
+    res_addresses = addresses[addresses["PtType"].astype(str).str.strip().str.lower().isin(["residential", "unknown"])]
+    res_features = gdf_to_features(res_addresses, {}, None)
+    write_json({
+        "type": "FeatureCollection",
+        "features": res_features
+    }, os.path.join(OUTPUT_DIR, "residential_addresses.json"))
+
+    # ── Export subdivisions ──
     subdiv_features = gdf_to_features(subdivisions_s, {
         "id": "ID",
         "name": "NAME",
@@ -696,6 +645,7 @@ def main():
         "acres": "ACRE",
         "status": "STATUS",
         "type": "TYPE",
+        "category": "CATEGORY",
         "recordedUnits": "RECORDEDUNITS",
         "plannedUnits": "PLANNEDUNITS",
         "existingUnits": "EXISTINGUNITS",
@@ -751,6 +701,7 @@ def main():
             "name": sub_name,
             "type": "subdivision",
             "subdivisionType": safe_value(sub_row.get("TYPE")),
+            "category": safe_value(sub_row.get("CATEGORY")),
             "platCount": len(sub_plats),
             "children": []
         }
@@ -951,6 +902,7 @@ def main():
             "name": "Unassigned Areas",
             "type": "subdivision",
             "subdivisionType": "Unassigned",
+            "category": "Other",
             "platCount": len(unassigned_plats),
             "children": []
         }

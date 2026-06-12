@@ -1,0 +1,152 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Classification Rules for Saratoga Springs GIS Pipeline
+#
+# Edit this file to add/remove subdivisions from categories, update owner
+# keywords for religious/public classification, or add commercial keywords.
+# No Python code changes needed.
+# ──────────────────────────────────────────────────────────────────────────────
+
+residential_communities:
+  - Aldara Apartments
+  - Alpine Springs
+  - Arcadia Springs
+  - Aspen Hills
+  - Beacon Pointe
+  - Brixton Park
+  - Canton Ridge
+  - Catalina Bay
+  - Coyote Hills
+  - Dalmore Meadows
+  - Daybreak at Harvest Hills
+  - Dignity Care Neighborhood
+  - Dignity Subdivision
+  - Drywood Meadows
+  - Freedom View Cove
+  - Harbor Bay
+  - Harvest Hills
+  - Harvest Village
+  - Heron Hills
+  - Hidden Landing
+  - Hillcrest Condominiums
+  - Hillside Ridge
+  - Jacobs Ranch
+  - Jordan Ridge Condos
+  - Jordan View Landing
+  - Just 6 Lots
+  - Lake Cove
+  - Lake Mountain Estates
+  - Lake View Terrace
+  - "Lakeside 25, 26, 27"
+  - Landrock Connection
+  - Landrock Estates
+  - Legacy Farms
+  - Lexington Green
+  - Madison Ridge
+  - Mallard Bay
+  - Mountain View Estates
+  - Mt. Saratoga
+  - North Lake Meadows
+  - North Lake Meadows Ph. 2
+  - Northshore
+  - Parkside
+  - Parkside Estates
+  - Pelican Bay
+  - Perelle Meadows
+  - River Heights
+  - Saratoga Chase
+  - Saratoga Hills
+  - Seargent Court
+  - Secret Springs
+  - Sierra Estates
+  - Springs at Harvest Hills
+  - Starhaven
+  - Stillwater at Saratoga
+  - Summerhill
+  - Sunrise Meadows
+  - Sunset Haven
+  - Talus Ridge
+  - The Benches
+  - The Cove at Jordan River
+  - The Gables
+  - The Villages at Saratoga
+  - Utah Lake Estates
+  - Viviano
+  - Wander
+  - Wellspring
+  - West Lake Estates
+  - West Ridge Estates
+  - Western Hills
+  - Wildflower
+  - Willow Glen
+
+mixed_housing:
+  - American Car Care
+  - River Bend
+  - River View
+  - Sergeant Court
+  - River Heights
+  - Summer Village
+
+commercial_subdivisions:
+  - Riverside Crossing
+
+# Owners whose parcels make a subdivision "Public"
+public_owners:
+  - STATE OF UTAH
+  - TOWN OF SARATOGA SPRINGS
+  - SARATOGA SPRINGS CORPORATION
+  - SARATOGA SPRINGS CITY
+  - CITY OF SARATOGA SPRINGS
+  - CITY OF SARATOGA SPRINGS THE
+  - UTAH COUNTY
+  - UTAH DEPARTMENT OF TRANSPORTATION
+  - ALPINE SCHOOL DISTRICT
+  - UDOT
+
+# Keywords matched against subdivision NAME (case-insensitive)
+religious_name_keywords:
+  - church of jesus christ
+  - latter-day saints
+  - lds
+
+# Keywords matched against OWNER_NAME (case-insensitive, substring match)
+religious_owner_keywords:
+  - LAND RESERVE INC
+  - PROPERTY RESERVE INC
+  - SUBURBAN LAND RESERVE
+  - CORP OF PRES BISHOP
+  - CORP OF PRESIDING BISHOP
+  - CHURCH OF JESUS CHRIST
+  - LDS
+
+# Keywords matched against subdivision NAME for commercial detection
+commercial_keywords:
+  - costco
+  - wal-mart
+  - maverik
+  - vet clinic
+  - storage
+  - the hub
+  - redwood square
+  - redwood medical
+  - equine center
+  - steele ridge plaza
+  - business park
+
+# Cities to filter out (parcels/features belonging to these are removed)
+out_of_bounds_cities:
+  - LEHI
+  - EAGLE MOUNTAIN
+  - EAGLE MTN
+
+# Tax city values to exclude
+out_of_bounds_tax_cities:
+  - Eagle Mountain
+  - Lehi
+
+# Site city values to exclude
+out_of_bounds_site_cities:
+  - EAGLE MOUNTAIN
+  - LEHI
+  - LEHI DIST
+  - ALPINE DIST

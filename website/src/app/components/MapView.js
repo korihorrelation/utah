@@ -30,17 +30,21 @@ export default function MapView({
   paths,
   parks,
   pois,
+  residentialAddresses,
   activeTile,
   activeSubdivisionId,
   selection,
   onNavigate,
+  hiddenSubdivisionIds,
+  hiddenCategories,
 }) {
   const mapRef = useRef(null);
   const tooltipRef = useRef(null);
-  const [showPaths, setShowPaths] = useState(true);
-  const [showParks, setShowParks] = useState(true);
+  const [showPaths, setShowPaths] = useState(false);
+  const [showParks, setShowParks] = useState(false);
   const [showPois, setShowPois] = useState(false);
   const [showBuildings, setShowBuildings] = useState(true);
+  const [showHeatmap, setShowHeatmap] = useState(false);
   const [buildingsData, setBuildingsData] = useState(null);
   const buildingsLoading = useRef(false);
   const [popupInfo, setPopupInfo] = useState(null);
@@ -58,20 +62,43 @@ export default function MapView({
     }
   }, [showBuildings, buildingsData]);
 
-  // ── Subdivision data: filter when drilled down ──
+  // ── Subdivision data: filter when drilled down or hidden ──
   const subdivisionData = useMemo(() => {
     if (!subdivisions) return null;
-    if (!activeSubdivisionId) return subdivisions;
+    const activeFeatures = subdivisions.features.filter(f => {
+      const isSubHidden = hiddenSubdivisionIds?.has(f.properties.id);
+      const isCatHidden = hiddenCategories?.has(f.properties.category);
+      return !isSubHidden && !isCatHidden;
+    });
+    if (!activeSubdivisionId) {
+      return {
+        ...subdivisions,
+        features: activeFeatures,
+      };
+    }
     return {
       ...subdivisions,
-      features: subdivisions.features.filter(f => f.properties.id === activeSubdivisionId),
+      features: activeFeatures.filter(f => f.properties.id === activeSubdivisionId),
     };
-  }, [subdivisions, activeSubdivisionId]);
+  }, [subdivisions, activeSubdivisionId, hiddenSubdivisionIds, hiddenCategories]);
+
+  const isActiveSubdivisionHidden = useMemo(() => {
+    if (activeSubdivisionId == null) return false;
+    if (hiddenSubdivisionIds?.has(activeSubdivisionId)) return true;
+
+    // Find the category of the active subdivision
+    const activeSub = subdivisions?.features?.find(f => f.properties.id === activeSubdivisionId);
+    if (activeSub && hiddenCategories?.has(activeSub.properties.category)) {
+      return true;
+    }
+    return false;
+  }, [activeSubdivisionId, subdivisions, hiddenSubdivisionIds, hiddenCategories]);
 
   // ── Drill-down visibility ──
   const depth = DEPTH[selection?.type] ?? 0;
-  const showParcels = depth >= 2;
-  const showAddresses = depth >= 3;
+  const showPlats = activeTile?.plats?.features?.length > 0 && !isActiveSubdivisionHidden;
+  const showParcels = depth >= 2 && !isActiveSubdivisionHidden;
+  const showAddresses = depth >= 3 && !isActiveSubdivisionHidden;
 
   // ── Parcel data: filter to selected plat ──
   const filteredParcels = useMemo(() => {
@@ -96,9 +123,10 @@ export default function MapView({
   // ── Buildings data: use active tile's buildings when drilled down, otherwise the global buildings ──
   const displayBuildings = useMemo(() => {
     if (!showBuildings) return null;
+    if (isActiveSubdivisionHidden) return null;
     if (activeTile?.buildings) return activeTile.buildings;
     return buildingsData;
-  }, [showBuildings, activeTile?.buildings, buildingsData]);
+  }, [showBuildings, activeTile?.buildings, buildingsData, isActiveSubdivisionHidden]);
 
   // ── Subdivision fill/line paint per feature ──
   // MapLibre can't do per-feature JS callbacks, so we add a _color property
@@ -142,14 +170,14 @@ export default function MapView({
   const interactiveLayerIds = useMemo(() => {
     const ids = [];
     if (coloredSubdivisions) ids.push('subdivisions-fill');
-    if (activeTile?.plats) ids.push('plats-fill');
+    if (showPlats) ids.push('plats-fill');
     if (showParcels && filteredParcels?.features?.length) ids.push('parcels-fill');
     if (showAddresses && filteredAddresses?.features?.length) ids.push('addresses-circle');
     if (showParks && parks) ids.push('parks-fill');
     if (showPois && coloredPois) ids.push('pois-circle');
     if (displayBuildings) ids.push('buildings-extrusion');
     return ids;
-  }, [coloredSubdivisions, activeTile?.plats, showParcels, filteredParcels, showAddresses, filteredAddresses, showParks, parks, showPois, coloredPois, displayBuildings]);
+  }, [coloredSubdivisions, showPlats, showParcels, filteredParcels, showAddresses, filteredAddresses, showParks, parks, showPois, coloredPois, displayBuildings]);
 
   // ── Click handler ──
   const onClick = useCallback((event) => {
@@ -490,6 +518,52 @@ export default function MapView({
 
         {/* ═══ Hierarchy layers (bottom → top): City → Subdivision → Plat → Parcel → Building → Address ═══ */}
 
+        {/* ── Address Heatmap ── */}
+        {residentialAddresses && showHeatmap && (
+          <Source id="address-heatmap" type="geojson" data={residentialAddresses}>
+            <Layer
+              id="address-heatmap-layer"
+              type="heatmap"
+              maxzoom={22}
+              paint={{
+                // Set weight low so a single house (1 point) is extremely faint
+                'heatmap-weight': 0.02,
+                'heatmap-intensity': [
+                  'interpolate',
+                  ['linear'],
+                  ['zoom'],
+                  11, 0.4,
+                  14, 2,
+                  16, 8,
+                  19, 30
+                ],
+                'heatmap-color': [
+                  'interpolate',
+                  ['linear'],
+                  ['heatmap-density'],
+                  0, 'rgba(33,102,172,0)',
+                  0.1, 'rgba(103,169,207,0.05)',  // Faint blue for isolated single-family
+                  0.3, 'rgb(103,169,207)',          // Light blue for small townhome groups
+                  0.5, 'rgb(209,229,240)',          // Soft gray/white for medium townhomes
+                  0.7, 'rgb(253,219,199)',          // Peach for high density townhomes
+                  0.85, 'rgb(239,138,98)',         // Orange for small apartment groups
+                  1.0, 'rgb(178,24,43)'             // Red for large apartment complexes
+                ],
+                'heatmap-radius': [
+                  'interpolate',
+                  ['linear'],
+                  ['zoom'],
+                  11, 12,
+                  14, 22,
+                  16, 45,
+                  19, 90
+                ],
+                'heatmap-opacity': 0.8
+              }}
+            />
+          </Source>
+        )}
+
         {/* ── City Boundary (broadest, renders lowest) ── */}
         {cityBoundary && (
           <Source id="city-boundary" type="geojson" data={cityBoundary}>
@@ -544,7 +618,7 @@ export default function MapView({
         )}
 
         {/* ── Plats ── */}
-        {activeTile?.plats?.features?.length > 0 && (
+        {showPlats && (
           <Source id="plats" type="geojson" data={activeTile.plats}>
             <Layer
               id="plats-fill"
@@ -728,6 +802,10 @@ export default function MapView({
           <input type="checkbox" className="map-layers-toggle__checkbox" checked={showBuildings} onChange={(e) => setShowBuildings(e.target.checked)} />
           <span>Buildings 3D</span>
         </label>
+        <label className="map-layers-toggle__item">
+          <input type="checkbox" className="map-layers-toggle__checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} />
+          <span>Address Heatmap</span>
+        </label>
       </div>
 
       <MapLegend
@@ -737,6 +815,7 @@ export default function MapView({
         showPaths={showPaths}
         showPois={showPois}
         showBuildings={showBuildings}
+        showHeatmap={showHeatmap}
       />
     </div>
   );
@@ -793,7 +872,7 @@ function PopupContent({ info }) {
 
 // ── Map legend ────────────────────────────────────────────────────────────
 
-function MapLegend({ activeSubdivisionId, selection, showParks, showPaths, showPois, showBuildings }) {
+function MapLegend({ activeSubdivisionId, selection, showParks, showPaths, showPois, showBuildings, showHeatmap }) {
   const depth = DEPTH[selection?.type] ?? 0;
 
   return (
@@ -841,6 +920,21 @@ function MapLegend({ activeSubdivisionId, selection, showParks, showPaths, showP
           <LegendItem color="#fbbf24" border="none" label="Retail & Food" circle />
           <LegendItem color="#2dd4bf" border="none" label="Healthcare" circle />
           <LegendItem color="#9499b3" border="none" label="Other POIs" circle />
+        </div>
+      )}
+      {showHeatmap && (
+        <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '8px', paddingTop: '8px' }}>
+          <div className="map-legend__title" style={{ fontSize: '10px', marginBottom: '4px' }}>Heatmap Density</div>
+          <div style={{
+            height: '8px',
+            borderRadius: '4px',
+            background: 'linear-gradient(to right, rgba(33,102,172,0) 0%, rgba(103,169,207,0.05) 10%, rgb(103,169,207) 30%, rgb(209,229,240) 50%, rgb(253,219,199) 70%, rgb(239,138,98) 85%, rgb(178,24,43) 100%)',
+            marginBottom: '4px'
+          }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-muted)' }}>
+            <span>Low</span>
+            <span>High</span>
+          </div>
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useHierarchy } from './hooks/useHierarchy';
 import BreadcrumbBar from './components/BreadcrumbBar';
@@ -27,6 +27,7 @@ export default function HomePage() {
     paths,
     parks,
     pois,
+    residentialAddresses,
     activeTile,
     activeSubdivisionId,
     selection,
@@ -41,6 +42,32 @@ export default function HomePage() {
   } = useHierarchy();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hiddenSubdivisionIds, setHiddenSubdivisionIds] = useState(new Set());
+  const [hiddenCategories, setHiddenCategories] = useState(new Set());
+
+  const toggleSubdivisionVisibility = useCallback((subdivisionId) => {
+    setHiddenSubdivisionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(subdivisionId)) {
+        next.delete(subdivisionId);
+      } else {
+        next.add(subdivisionId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleCategoryVisibility = useCallback((categoryName) => {
+    setHiddenCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(categoryName)) {
+        next.delete(categoryName);
+      } else {
+        next.add(categoryName);
+      }
+      return next;
+    });
+  }, []);
 
   // ── Escape key listener: go back a layer in hierarchy ──
   useEffect(() => {
@@ -117,6 +144,10 @@ export default function HomePage() {
             selection={selection}
             expandedNodes={expandedNodes}
             onNavigate={navigateTo}
+            hiddenSubdivisionIds={hiddenSubdivisionIds}
+            onToggleVisibility={toggleSubdivisionVisibility}
+            hiddenCategories={hiddenCategories}
+            onToggleCategoryVisibility={toggleCategoryVisibility}
           />
           <DetailPanel
             selection={selection}
@@ -133,10 +164,13 @@ export default function HomePage() {
           paths={paths}
           parks={parks}
           pois={pois}
+          residentialAddresses={residentialAddresses}
           activeTile={activeTile}
           activeSubdivisionId={activeSubdivisionId}
           selection={selection}
           onNavigate={navigateTo}
+          hiddenSubdivisionIds={hiddenSubdivisionIds}
+          hiddenCategories={hiddenCategories}
         />
 
         {/* Tile loading indicator */}

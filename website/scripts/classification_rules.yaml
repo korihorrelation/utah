@@ -88,6 +88,15 @@ residential_communities:
   - Eagle Park
   - Ironwood
   - Fairway
+  - Stout Development
+  - Sage Hill
+  - Riverwalk
+  - Loch Lomond
+  - Lighthouse Cove
+  - Lakeview Heights
+  - Freeland Saratoga
+  - Cliff Lake
+  - Canyon Hollow
 
 mixed_housing:
   - American Car Care
@@ -96,15 +105,25 @@ mixed_housing:
   - Sergeant Court
   - River Heights
   - Summer Village
+  - Three Canyons
 
 commercial_subdivisions:
   - Riverside Crossing
+  - Mountain Sunrise Academy
+
+public_subdivisions:
+  - Utah Lake Water Users Association Inc Area
+  - Central Utah Water Conservancy District Area
+  - City Center
+  - Westlake High School
 
 # Owners whose parcels make a subdivision "Public"
 public_owners:
   - STATE OF UTAH
   - STATE OF UTAH (ET AL)
   - STATE OF UTAH DIVISION OF FORESTRY FIRE AND STATE LANDS (ET AL)
+  - STATE OF UTAH DIV OF FORESTRY FIRE AND STATE LANDS
+  - SALT LAKE CITY
   - TOWN OF SARATOGA SPRINGS
   - SARATOGA SPRINGS CORPORATION
   - SARATOGA SPRINGS CITY

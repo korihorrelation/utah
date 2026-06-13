@@ -71,6 +71,7 @@ def load_classification_rules(path=None):
     rules["_residential_lower"] = {n.lower() for n in rules.get("residential_communities", [])}
     rules["_mixed_housing_lower"] = {n.lower() for n in rules.get("mixed_housing", [])}
     rules["_commercial_sub_lower"] = {n.lower() for n in rules.get("commercial_subdivisions", [])}
+    rules["_public_sub_lower"] = {n.lower() for n in rules.get("public_subdivisions", [])}
     rules["_public_owners_upper"] = {n.upper() for n in rules.get("public_owners", [])}
     
     return rules

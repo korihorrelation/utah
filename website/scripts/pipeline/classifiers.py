@@ -102,7 +102,7 @@ def resolve_category(sub_name, sub_id, sub_type, plats, parcels, rules):
         return "Residential Communities"
 
     # 3. Public owner list
-    if check_is_public_subdivision(sub_id, plats, parcels, rules["_public_owners_upper"]):
+    if name_clean in rules.get("_public_sub_lower", set()) or sub_id == 4400000 or check_is_public_subdivision(sub_id, plats, parcels, rules["_public_owners_upper"]):
         return "Public"
 
     # 4. Commercial check

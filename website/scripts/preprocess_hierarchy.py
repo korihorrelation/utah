@@ -111,10 +111,10 @@ def main():
 
     # ── Promote unassigned parcels ──
     parcels, plats = match_unassigned_by_name(parcels, plats, subdivisions)
-    parcels, subdivisions, plats = promote_unassigned_parcels(parcels, subdivisions, plats)
-
     # ── Create Roads subdivision for UDOT/State-owned parcels ──
     parcels, subdivisions, plats = create_roads_subdivision(parcels, subdivisions, plats, rules)
+
+    parcels, subdivisions, plats = promote_unassigned_parcels(parcels, subdivisions, plats, rules)
 
     # ── Build hierarchy: Building → Parcel + POI matching ──
     buildings = join_buildings_to_parcels(buildings, parcels)

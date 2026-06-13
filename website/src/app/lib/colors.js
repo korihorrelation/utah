@@ -3,26 +3,14 @@
  * Each level of the hierarchy has a distinct hue.
  */
 
-// Cities Skylines inspired zoning colors for subdivisions
-const ZONING_COLORS = {
-  // Residential (Green)
-  'Subdivision': '#10b981',        // Emerald Green
-  'Minor Subdivision': '#34d399',  // Medium Emerald Green
-  'MDA': '#059669',                // Forest Green (Master Planned residential)
-  'Multi Familyi': '#047857',      // Dark Forest Green (High density residential)
-
-  // Commercial (Blue)
-  'Commercial': '#2563eb',         // Royal Blue
-  'RV Camp': '#0ea5e9',            // Sky Blue (Tourism commercial)
-
-  // Mixed Use (Teal/Cyan)
-  'Mixed Use': '#06b6d4',          // Cyan
-
-  // Services/Civic (Purple/Indigo/Slate)
-  'School': '#6366f1',             // Indigo (Educational Service)
-  'CommunityPlan': '#64748b',      // Slate Gray (Civic Service)
-  'Religious': '#fca5a5',          // Light Red
-  'Unassigned': '#475569',         // Cool Gray
+// Colors mapped directly to categories for strict consistency across tree and map
+const CATEGORY_COLORS = {
+  'Residential Communities': '#10b981', // Emerald Green
+  'Mixed Housing': '#06b6d4',          // Cyan
+  'Commercial': '#2563eb',             // Royal Blue
+  'Religious': '#ff69b4',              // Lighter Bright Pink
+  'Public': '#a855f7',                 // Purple
+  'Other': '#64748b',                  // Slate Gray
 };
 
 // Subdivision fill colors — 12 distinct hues cycling through (fallback)
@@ -41,11 +29,11 @@ const SUBDIVISION_COLORS = [
   '#fb923c', // orange-light
 ];
 
-export function getSubdivisionColor(typeOrIndex) {
-  if (typeof typeOrIndex === 'number') {
-    return SUBDIVISION_COLORS[typeOrIndex % SUBDIVISION_COLORS.length];
+export function getSubdivisionColor(categoryOrIndex) {
+  if (typeof categoryOrIndex === 'number') {
+    return SUBDIVISION_COLORS[categoryOrIndex % SUBDIVISION_COLORS.length];
   }
-  return ZONING_COLORS[typeOrIndex] || '#7c8aff';
+  return CATEGORY_COLORS[categoryOrIndex] || '#64748b';
 }
 
 export function getSubdivisionCategory(type) {

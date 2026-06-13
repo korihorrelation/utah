@@ -105,3 +105,21 @@ def clean_owner_name(name):
     if not s:
         return "Unknown Owner"
     return s.replace("Lds", "LDS").replace("Udot", "UDOT").replace(" Us ", " US ")
+
+
+def clean_address(addr):
+    """Normalize an address to Title Case with common direction acronym fixes."""
+    if pd.isna(addr) or addr is None:
+        return None
+    s = str(addr).strip()
+    if not s:
+        return None
+    words = s.lower().split()
+    capitalized = []
+    for w in words:
+        if w in ['ne', 'nw', 'se', 'sw']:
+            capitalized.append(w.upper())
+        else:
+            capitalized.append(w.capitalize())
+    return " ".join(capitalized)
+

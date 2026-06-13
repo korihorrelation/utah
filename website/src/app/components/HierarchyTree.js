@@ -12,10 +12,8 @@ import { getSubdivisionColor } from '../lib/colors';
  *   - `expandedNodes` determines which tree branches are open.
  *   - `onNavigate` is the single callback; the hook handles expansion + breadcrumb.
  */
-export default function HierarchyTree({ hierarchy, selection, expandedNodes, onNavigate, hiddenSubdivisionIds, onToggleVisibility, hiddenCategories, onToggleCategoryVisibility }) {
-  const [expandedCategories, setExpandedCategories] = useState(
-    new Set(['Residential Communities', 'Mixed Housing', 'Commercial', 'Public', 'Religious', 'Other'])
-  );
+export default function HierarchyTree({ hierarchy, selection, expandedNodes, onNavigate, hiddenSubdivisionIds, onToggleVisibility, onToggleCategoryVisibility }) {
+  const [expandedCategories, setExpandedCategories] = useState(new Set());
 
   const toggleCategory = useCallback((cat) => {
     setExpandedCategories(prev => {
@@ -57,12 +55,12 @@ export default function HierarchyTree({ hierarchy, selection, expandedNodes, onN
   if (!hierarchy) return null;
 
   const CATEGORIES = [
-    { name: 'Residential Communities', color: '#10b981', label: 'Residential Communities' },
-    { name: 'Mixed Housing', color: '#06b6d4', label: 'Mixed Housing' },
-    { name: 'Commercial', color: '#2563eb', label: 'Commercial' },
-    { name: 'Religious', color: '#fca5a5', label: 'Religious' },
-    { name: 'Public', color: '#6366f1', label: 'Public' },
-    { name: 'Other', color: '#64748b', label: 'Other' },
+    { name: 'Residential Communities', color: getSubdivisionColor('Residential Communities'), label: 'Residential Communities' },
+    { name: 'Mixed Housing', color: getSubdivisionColor('Mixed Housing'), label: 'Mixed Housing' },
+    { name: 'Commercial', color: getSubdivisionColor('Commercial'), label: 'Commercial' },
+    { name: 'Religious', color: getSubdivisionColor('Religious'), label: 'Religious' },
+    { name: 'Public', color: getSubdivisionColor('Public'), label: 'Public' },
+    { name: 'Other', color: getSubdivisionColor('Other'), label: 'Other' },
   ];
 
   return (
@@ -83,7 +81,6 @@ export default function HierarchyTree({ hierarchy, selection, expandedNodes, onN
             onNavigate={onNavigate}
             hiddenSubdivisionIds={hiddenSubdivisionIds}
             onToggleVisibility={onToggleVisibility}
-            hiddenCategories={hiddenCategories}
             onToggleCategoryVisibility={onToggleCategoryVisibility}
           />
         );
@@ -94,8 +91,8 @@ export default function HierarchyTree({ hierarchy, selection, expandedNodes, onN
 
 // ── Category folder ───────────────────────────────────────────────────────
 
-function CategoryNode({ label, color, subdivisions, isExpanded, onToggle, selection, expandedNodes, onNavigate, hiddenSubdivisionIds, onToggleVisibility, hiddenCategories, onToggleCategoryVisibility }) {
-  const isHidden = hiddenCategories?.has(label);
+function CategoryNode({ label, color, subdivisions, isExpanded, onToggle, selection, expandedNodes, onNavigate, hiddenSubdivisionIds, onToggleVisibility, onToggleCategoryVisibility }) {
+  const isHidden = subdivisions.length > 0 && subdivisions.every(sub => hiddenSubdivisionIds?.has(sub.id));
 
   return (
     <div className="tree-node" role="treeitem" aria-expanded={isExpanded}>
@@ -164,7 +161,6 @@ function CategoryNode({ label, color, subdivisions, isExpanded, onToggle, select
               onNavigate={onNavigate}
               hiddenSubdivisionIds={hiddenSubdivisionIds}
               onToggleVisibility={onToggleVisibility}
-              hiddenCategories={hiddenCategories}
             />
           ))}
         </div>
@@ -183,18 +179,17 @@ const NODE_META = {
   address: { indent: 92, iconCls: 'tree-node__icon--address' },
 };
 
-function TreeNode({ node, depth, selection, expandedNodes, onNavigate, hiddenSubdivisionIds, onToggleVisibility, hiddenCategories }) {
+function TreeNode({ node, depth, selection, expandedNodes, onNavigate, hiddenSubdivisionIds, onToggleVisibility }) {
   const type = node.type || nodeTypeFromDepth(depth);
   const meta = NODE_META[type];
   const nodeKey = `${type}-${node.id}`;
   const isExpanded = expandedNodes.has(nodeKey);
-  const isSelected = selection?.type === type && selection?.id === node.id;
+  const isSelected = selection?.type === type && selection?.id == node.id;
   const isInChain = isNodeInSelectionChain(type, node.id, selection);
   const hasChildren = node.children?.length > 0;
   const elementRef = useRef(null);
 
-  const isCategoryHidden = hiddenCategories?.has(node.category);
-  const isHidden = type === 'subdivision' && (hiddenSubdivisionIds?.has(node.id) || isCategoryHidden);
+  const isHidden = type === 'subdivision' && hiddenSubdivisionIds?.has(node.id);
 
   // Auto-scroll when this node becomes the selected node.
   useEffect(() => {
@@ -216,14 +211,35 @@ function TreeNode({ node, depth, selection, expandedNodes, onNavigate, hiddenSub
     : (node.addressCount || node.children?.length || null);
 
   // Color dot for subdivisions.
-  const subdivisionColor = type === 'subdivision' ? getSubdivisionColor(node.subdivisionType) : undefined;
+  const subdivisionColor = type === 'subdivision' ? getSubdivisionColor(node.category) : undefined;
   const iconStyle = type === 'subdivision' ? { background: subdivisionColor } : undefined;
 
-  // Limit children for performance.
+  // Limit children for performance. Ensure the selected child is always rendered even if beyond index 200.
   const displayChildren = useMemo(() => {
     if (!node.children) return [];
-    return node.children.slice(0, 200);
-  }, [node.children]);
+    if (node.children.length <= 200) return node.children;
+
+    let activeChildIndex = -1;
+    if (selection) {
+      activeChildIndex = node.children.findIndex(child => {
+        const childType = child.type || nodeTypeFromDepth(depth + 1);
+        if (childType === 'subdivision') return selection.subdivisionId == child.id;
+        if (childType === 'plat') return selection.platId == child.id;
+        if (childType === 'parcel') return selection.parcelId == child.id;
+        if (childType === 'building') return selection.buildingId == child.id;
+        if (childType === 'address') return selection.id == child.id && selection.type === 'address';
+        return false;
+      });
+    }
+
+    if (activeChildIndex < 200) {
+      return node.children.slice(0, 200);
+    } else {
+      const sliced = node.children.slice(0, 199);
+      sliced.push(node.children[activeChildIndex]);
+      return sliced;
+    }
+  }, [node.children, selection, depth]);
 
   return (
     <div className="tree-node" ref={elementRef} role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
@@ -293,7 +309,6 @@ function TreeNode({ node, depth, selection, expandedNodes, onNavigate, hiddenSub
               onNavigate={onNavigate}
               hiddenSubdivisionIds={hiddenSubdivisionIds}
               onToggleVisibility={onToggleVisibility}
-              hiddenCategories={hiddenCategories}
             />
           ))}
           {node.children.length > 200 && (
@@ -325,10 +340,10 @@ function nodeTypeFromDepth(depth) {
 function isNodeInSelectionChain(type, id, selection) {
   if (!selection) return false;
   switch (type) {
-    case 'subdivision': return selection.subdivisionId === id;
-    case 'plat': return selection.platId === id;
-    case 'parcel': return selection.parcelId === id;
-    case 'building': return selection.buildingId === id;
+    case 'subdivision': return selection.subdivisionId == id;
+    case 'plat': return selection.platId == id;
+    case 'parcel': return selection.parcelId == id;
+    case 'building': return selection.buildingId == id;
     default: return false;
   }
 }

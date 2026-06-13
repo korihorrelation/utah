@@ -36,7 +36,6 @@ export default function MapView({
   selection,
   onNavigate,
   hiddenSubdivisionIds,
-  hiddenCategories,
 }) {
   const mapRef = useRef(null);
   const tooltipRef = useRef(null);
@@ -67,8 +66,7 @@ export default function MapView({
     if (!subdivisions) return null;
     const activeFeatures = subdivisions.features.filter(f => {
       const isSubHidden = hiddenSubdivisionIds?.has(f.properties.id);
-      const isCatHidden = hiddenCategories?.has(f.properties.category);
-      return !isSubHidden && !isCatHidden;
+      return !isSubHidden;
     });
     if (!activeSubdivisionId) {
       return {
@@ -80,19 +78,13 @@ export default function MapView({
       ...subdivisions,
       features: activeFeatures.filter(f => f.properties.id === activeSubdivisionId),
     };
-  }, [subdivisions, activeSubdivisionId, hiddenSubdivisionIds, hiddenCategories]);
+  }, [subdivisions, activeSubdivisionId, hiddenSubdivisionIds]);
 
   const isActiveSubdivisionHidden = useMemo(() => {
     if (activeSubdivisionId == null) return false;
     if (hiddenSubdivisionIds?.has(activeSubdivisionId)) return true;
-
-    // Find the category of the active subdivision
-    const activeSub = subdivisions?.features?.find(f => f.properties.id === activeSubdivisionId);
-    if (activeSub && hiddenCategories?.has(activeSub.properties.category)) {
-      return true;
-    }
     return false;
-  }, [activeSubdivisionId, subdivisions, hiddenSubdivisionIds, hiddenCategories]);
+  }, [activeSubdivisionId, hiddenSubdivisionIds]);
 
   // ── Drill-down visibility ──
   const depth = DEPTH[selection?.type] ?? 0;
@@ -138,7 +130,7 @@ export default function MapView({
         ...f,
         properties: {
           ...f.properties,
-          _color: getSubdivisionColor(f.properties.type),
+          _color: getSubdivisionColor(f.properties.category),
           _isActive: selection?.type === 'subdivision' && selection?.id === f.properties.id ? 1 : 0,
         },
       })),
@@ -212,8 +204,25 @@ export default function MapView({
       });
     } else if (layerId === 'buildings-extrusion') {
       const cls = BUILDING_CLASS_LABELS[props.class] || 'Building';
-      const name = props.address || props.name || cls;
-      onNavigate('building', props.id, name);
+      let name;
+      if (props.name) {
+        name = props.name;
+      } else if (props.housingLabel) {
+        name = props.address ? `${props.housingLabel} at ${props.address}` : props.housingLabel;
+      } else {
+        name = props.address || cls;
+      }
+
+      // Determine the parcel closest to/under the click point
+      let clickedParcelId = null;
+      if (mapRef.current) {
+        const parcelFeatures = mapRef.current.queryRenderedFeatures(event.point, { layers: ['parcels-fill'] });
+        if (parcelFeatures && parcelFeatures.length > 0) {
+          clickedParcelId = parcelFeatures[0].properties.id;
+        }
+      }
+
+      onNavigate('building', props.id, name, clickedParcelId);
       setPopupInfo({
         longitude: event.lngLat.lng,
         latitude: event.lngLat.lat,
@@ -270,8 +279,15 @@ export default function MapView({
     } else if (layerId === 'pois-circle') {
       label = props.name;
     } else if (layerId === 'buildings-extrusion') {
+      // Priority: POI name → Housing label (+ address) → Address → Class code
       const cls = BUILDING_CLASS_LABELS[props.class] || 'Building';
-      label = props.address || props.name || cls;
+      if (props.name) {
+        label = props.name;
+      } else if (props.housingLabel) {
+        label = props.address ? `${props.housingLabel} at\n${props.address}` : props.housingLabel;
+      } else {
+        label = props.address || cls;
+      }
     }
 
     if (label && tip) {
@@ -808,15 +824,7 @@ export default function MapView({
         </label>
       </div>
 
-      <MapLegend
-        activeSubdivisionId={activeSubdivisionId}
-        selection={selection}
-        showParks={showParks}
-        showPaths={showPaths}
-        showPois={showPois}
-        showBuildings={showBuildings}
-        showHeatmap={showHeatmap}
-      />
+      {/* MapLegend removed by request */}
     </div>
   );
 }
@@ -870,86 +878,7 @@ function PopupContent({ info }) {
   return null;
 }
 
-// ── Map legend ────────────────────────────────────────────────────────────
 
-function MapLegend({ activeSubdivisionId, selection, showParks, showPaths, showPois, showBuildings, showHeatmap }) {
-  const depth = DEPTH[selection?.type] ?? 0;
-
-  return (
-    <div
-      className="map-legend"
-      onClick={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-      onWheel={(e) => e.stopPropagation()}
-    >
-      <div className="map-legend__title">Zoning & Layers</div>
-
-      <LegendItem color="#fb7185" border="1px dashed #fb7185" label="City Boundary" />
-      <LegendItem color="rgba(16, 185, 129, 0.15)" border="1px solid #10b981" label="Residential" />
-      <LegendItem color="rgba(37, 99, 235, 0.15)" border="1px solid #2563eb" label="Commercial" />
-      <LegendItem color="rgba(6, 182, 212, 0.15)" border="1px solid #06b6d4" label="Mixed Use" />
-      <LegendItem color="rgba(99, 102, 241, 0.15)" border="1px solid #6366f1" label="Civic / Public" />
-
-      {activeSubdivisionId && (
-        <LegendItem color="rgba(167, 139, 250, 0.3)" border="1px solid #a78bfa" label="Plats" />
-      )}
-      {depth >= 2 && (
-        <LegendItem color="rgba(45, 212, 191, 0.3)" border="1px solid #2dd4bf" label="Parcels" />
-      )}
-      {depth >= 3 && (
-        <LegendItem color="#fbbf24" border="none" label="Addresses" circle />
-      )}
-
-      <LegendItem color="rgba(148, 153, 179, 0.4)" label="Roads" line />
-      
-      {showPaths && (
-        <LegendItem color="#fb923c" label="Paths" line />
-      )}
-      {showParks && (
-        <LegendItem color="rgba(16, 185, 129, 0.15)" border="1px solid #059669" label="Parks" />
-      )}
-      {showBuildings && (
-        <LegendItem color="rgba(167, 139, 250, 0.6)" border="1px solid #a78bfa" label="Buildings 3D" />
-      )}
-      {showPois && (
-        <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '8px', paddingTop: '8px' }}>
-          <div className="map-legend__title" style={{ fontSize: '10px', marginBottom: '4px' }}>POI Groups</div>
-          <LegendItem color="#a78bfa" border="none" label="Education" circle />
-          <LegendItem color="#fb7185" border="none" label="Civic & Worship" circle />
-          <LegendItem color="#fbbf24" border="none" label="Retail & Food" circle />
-          <LegendItem color="#2dd4bf" border="none" label="Healthcare" circle />
-          <LegendItem color="#9499b3" border="none" label="Other POIs" circle />
-        </div>
-      )}
-      {showHeatmap && (
-        <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '8px', paddingTop: '8px' }}>
-          <div className="map-legend__title" style={{ fontSize: '10px', marginBottom: '4px' }}>Heatmap Density</div>
-          <div style={{
-            height: '8px',
-            borderRadius: '4px',
-            background: 'linear-gradient(to right, rgba(33,102,172,0) 0%, rgba(103,169,207,0.05) 10%, rgb(103,169,207) 30%, rgb(209,229,240) 50%, rgb(253,219,199) 70%, rgb(239,138,98) 85%, rgb(178,24,43) 100%)',
-            marginBottom: '4px'
-          }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-muted)' }}>
-            <span>Low</span>
-            <span>High</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LegendItem({ color, border, label, line, circle }) {
-  const cls = `map-legend__swatch${line ? ' map-legend__swatch--line' : ''}${circle ? ' map-legend__swatch--circle' : ''}`;
-  return (
-    <div className="map-legend__item">
-      <span className={cls} style={{ background: color, border: border || 'none' }} />
-      {label}
-    </div>
-  );
-}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

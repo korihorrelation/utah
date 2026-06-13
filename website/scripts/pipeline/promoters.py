@@ -256,7 +256,27 @@ def promote_unassigned_parcels(parcels, subdivisions, plats, rules=None):
     subdiv_sindex = subdivs_proj.sindex
     orphans_by_sub = {}
     
+    public_owners = set()
+    religious_owners = []
+    if rules:
+        public_owners = rules.get("_public_owners_upper", set())
+        religious_owners = [kw.upper() for kw in rules.get("religious_owner_keywords", [])]
+
+    def is_school_or_church(p_row):
+        owner = str(p_row.get("OWNER_NAME") or "").strip().upper()
+        school_keywords = ["SCHOOL", "ACADEMY", "DISTRICT", "COLLEGE", "UNIVERSITY", "EDUCATION"]
+        if any(kw in owner for kw in school_keywords):
+            return True
+        if "CHURCH" in owner or "LDS" in owner:
+            return True
+        if religious_owners and any(kw in owner for kw in religious_owners):
+            return True
+        return False
+
     for p_idx, p_row in unassigned_parcels_proj.iterrows():
+        if is_school_or_church(p_row):
+            continue
+            
         geom = p_row.geometry
         if geom is None or geom.is_empty:
             continue
@@ -381,19 +401,29 @@ def promote_unassigned_parcels(parcels, subdivisions, plats, rules=None):
 
     # ── Phase 3: Single Promotions ──
     misc_public_indices = []
+    misc_religious_indices = []
     misc_other_indices = []
     
     public_owners = set()
+    religious_owners = []
     if rules:
         public_owners = rules.get("_public_owners_upper", set())
+        religious_owners = [kw.upper() for kw in rules.get("religious_owner_keywords", [])]
 
     for p_idx, p_row in unassigned_parcels_proj.iterrows():
         if p_idx in clustered_indices:
             continue
             
         owner = str(parcels.loc[p_idx].get("OWNER_NAME") or "").strip().upper()
+        
+        is_religious = False
+        if religious_owners and any(kw in owner for kw in religious_owners):
+            is_religious = True
+            
         if owner in public_owners:
             misc_public_indices.append(p_idx)
+        elif is_religious:
+            misc_religious_indices.append(p_idx)
         else:
             misc_other_indices.append(p_idx)
 
@@ -423,7 +453,8 @@ def promote_unassigned_parcels(parcels, subdivisions, plats, rules=None):
         return len(indices)
 
     single_promotions += create_misc_group(misc_public_indices, "Misc Parcels", int(SINGLE_PROMOTED_SUB_BASE), int(SINGLE_PROMOTED_PLAT_BASE))
-    single_promotions += create_misc_group(misc_other_indices, "Misc Parcels", int(SINGLE_PROMOTED_SUB_BASE) + 1, int(SINGLE_PROMOTED_PLAT_BASE) + 1)
+    single_promotions += create_misc_group(misc_religious_indices, "Misc Parcels", int(SINGLE_PROMOTED_SUB_BASE) + 1, int(SINGLE_PROMOTED_PLAT_BASE) + 1)
+    single_promotions += create_misc_group(misc_other_indices, "Misc Parcels", int(SINGLE_PROMOTED_SUB_BASE) + 2, int(SINGLE_PROMOTED_PLAT_BASE) + 2)
 
     print(f"  Spatially assigned {spatial_assigned_count} parcels to existing subdivisions.")
     print(f"  Promoted {cluster_promotions} clustered parcels and {single_promotions} single parcels.")

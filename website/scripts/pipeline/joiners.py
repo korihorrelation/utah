@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 
-from .config import BUILDING_CLASS_HEIGHTS, OUTPUT_DIR
+from .config import BUILDING_CLASS_HEIGHTS, OUTPUT_DIR, MAPS_DIR
 
 
 def join_land_use(target_gdf, landuse, label="layer"):
@@ -123,15 +123,17 @@ def join_addresses_to_parcels(addresses, parcels):
     return addresses
 
 
-def join_buildings_to_parcels(buildings, parcels):
-    """Join buildings to parcels via spatial centroid-in-polygon.
+def join_buildings_to_parcels(buildings, parcels, addresses=None):
+    """Join buildings to parcels via address points and spatial centroid-in-polygon.
     
-    Also estimates building heights from BUILDINGCL and footprint area.
+    If the building contains address points, it is joined to all parcels
+    associated with those address points.
+    If the building has no address points inside it, it falls back to centroid-in-polygon.
     
     Returns:
-        buildings GeoDataFrame with _parcel_idx and _height columns.
+        buildings GeoDataFrame with _parcel_indices and _height columns.
     """
-    print("\nJoining Building -> Parcel (spatial centroid-in-polygon)...")
+    print("\nJoining Building -> Parcel...")
 
     # Estimate heights from BUILDINGCL
     buildings["_height"] = buildings["BUILDINGCL"].map(BUILDING_CLASS_HEIGHTS).fillna(8.0)
@@ -142,6 +144,36 @@ def join_buildings_to_parcels(buildings, parcels):
         buildings["_height"] = buildings["_height"].round(1)
 
     buildings["_bldg_idx"] = buildings.index
+
+    # Initialize empty lists for _parcel_indices
+    buildings["_parcel_indices"] = [[] for _ in range(len(buildings))]
+
+    # 1. Match via addresses
+    address_matches = 0
+    if addresses is not None and len(addresses) > 0:
+        # Project to epsg=3566 for spatial query
+        bldg_proj = buildings.to_crs(epsg=3566)
+        addr_proj = addresses.to_crs(epsg=3566)
+        
+        # We want to match address points inside building footprints
+        addr_points = addr_proj[["geometry", "_parcel_idx"]].copy()
+        addr_points["_addr_idx"] = addr_points.index
+        
+        spatial_a2b = gpd.sjoin(
+            addr_points,
+            bldg_proj[["geometry", "_bldg_idx"]],
+            how="inner",
+            predicate="within"
+        )
+        
+        # Group by building index to find all parcel indices
+        for b_idx, group in spatial_a2b.groupby("index_right"):
+            p_indices = group["_parcel_idx"].dropna().unique().astype(int).tolist()
+            if p_indices:
+                buildings.at[b_idx, "_parcel_indices"] = p_indices
+                address_matches += 1
+
+    # 2. Fallback to centroid-in-polygon for buildings with no address points
     bldg_centroids = buildings.copy()
     bldg_centroids["_centroid"] = bldg_centroids.geometry.centroid
     bldg_centroids = bldg_centroids.set_geometry("_centroid")
@@ -154,13 +186,34 @@ def join_buildings_to_parcels(buildings, parcels):
     )
     spatial_b2p = spatial_b2p[~spatial_b2p.index.duplicated(keep="first")]
 
-    buildings["_parcel_idx"] = None
+    centroid_matches = 0
     for idx, row in spatial_b2p.iterrows():
+        existing_indices = buildings.at[idx, "_parcel_indices"]
+        if existing_indices:
+            continue
+            
         if pd.notna(row.get("index_right")):
-            buildings.at[idx, "_parcel_idx"] = int(row["index_right"])
+            p_idx = int(row["index_right"])
+            buildings.at[idx, "_parcel_indices"] = [p_idx]
+            centroid_matches += 1
 
-    bldg_matched = buildings["_parcel_idx"].notna().sum()
-    print(f"  Matched: {bldg_matched}/{len(buildings)}")
+    print(f"  Matched via addresses: {address_matches}")
+    print(f"  Matched via centroid (fallback): {centroid_matches}")
+    print(f"  Total matched: {address_matches + centroid_matches}/{len(buildings)}")
+
+    # Propagate parcel address to building for tooltip display (use first parcel address as fallback)
+    buildings["_parcel_address"] = None
+    for idx, row in buildings.iterrows():
+        p_indices = row.get("_parcel_indices")
+        if p_indices:
+            p_idx = p_indices[0]
+            if p_idx in parcels.index:
+                addr = parcels.at[p_idx, "SITE_FULL_"] if "SITE_FULL_" in parcels.columns else None
+                if pd.notna(addr) and str(addr).strip():
+                    buildings.at[idx, "_parcel_address"] = str(addr).strip()
+
+    addr_count = buildings["_parcel_address"].notna().sum()
+    print(f"  Buildings with parcel address: {addr_count}/{len(buildings)}")
     return buildings
 
 
@@ -185,4 +238,77 @@ def join_pois_to_buildings(buildings):
                     poi_name = row.get("name")
                     print(f"  POI '{poi_name}' is {min_dist:.1f}m from building. Assigning name.")
                     buildings.at[nearest_idx, "NAME"] = poi_name
+    return buildings
+
+
+# ── Subtype display labels ───────────────────────────────────────────────
+
+_SUBTYPE_LABELS = {
+    'single_family': 'Single Family Home',
+    'townhome': 'Townhome',
+    'duplex': 'Duplex',
+    'apartment': 'Apartment Complex',
+    'condo': 'Condo',
+    'mixed th/single_family': 'Multi-Family',
+}
+
+
+def _build_hui_label(group):
+    """Build a human-readable label from a group of HUI records overlapping one building."""
+    total_units = int(group['UNIT_COUNT'].sum())
+    n_records = len(group)
+    dominant_subtype = group['SUBTYPE'].mode().iloc[0] if len(group) > 0 else 'single_family'
+    base_label = _SUBTYPE_LABELS.get(dominant_subtype, 'Residential')
+
+    if n_records == 1 and total_units == 1:
+        return base_label
+    if n_records == 1 and total_units > 1:
+        return f"{total_units}-unit {base_label}"
+    # Multiple HUI records overlapping one building
+    return f"{total_units}-unit {base_label}"
+
+
+def join_housing_to_buildings(buildings):
+    """Spatially join Housing Unit Inventory to buildings and generate labels.
+
+    For each building footprint, finds overlapping HUI records (via centroid-in-polygon)
+    and generates a human-readable housing description like '4-unit Townhome'.
+
+    Writes result into buildings['_hui_label'].
+    """
+    hui_path = os.path.join(MAPS_DIR, 'buildings_and_parcels', 'housing_unit_inventory.zip')
+    if not os.path.exists(hui_path):
+        print("  Housing Unit Inventory not found, skipping.")
+        buildings['_hui_label'] = None
+        return buildings
+
+    print("\nJoining Housing Unit Inventory -> Buildings (spatial centroid-in-polygon)...")
+    hui = gpd.read_file(hui_path)
+    print(f"  HUI records loaded: {len(hui)}")
+
+    # Reproject to a common projected CRS for accurate spatial ops
+    bldg_proj = buildings.to_crs(epsg=3566)
+    hui_proj = hui.to_crs(epsg=3566)
+
+    # Use HUI centroids for the join
+    hui_proj['_centroid'] = hui_proj.geometry.centroid
+    hui_points = hui_proj.set_geometry('_centroid')
+
+    sj = gpd.sjoin(
+        hui_points[['_centroid', 'TYPE', 'SUBTYPE', 'UNIT_COUNT']],
+        bldg_proj[['geometry']],
+        how='inner',
+        predicate='within'
+    )
+
+    # Group by building index and build labels
+    buildings['_hui_label'] = None
+    grouped = sj.groupby('index_right')
+    label_count = 0
+    for bldg_idx, group in grouped:
+        label = _build_hui_label(group)
+        buildings.at[bldg_idx, '_hui_label'] = label
+        label_count += 1
+
+    print(f"  Buildings with HUI labels: {label_count}/{len(buildings)}")
     return buildings

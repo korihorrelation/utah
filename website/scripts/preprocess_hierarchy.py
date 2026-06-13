@@ -19,11 +19,12 @@ from pipeline.config import load_classification_rules
 from pipeline.filters import apply_filters
 from pipeline.joiners import (join_land_use, join_plats_to_subdivisions,
                                join_parcels_to_plats, join_addresses_to_parcels,
-                               join_buildings_to_parcels, join_pois_to_buildings)
+                               join_buildings_to_parcels, join_pois_to_buildings,
+                               join_housing_to_buildings)
 from pipeline.promoters import (create_israel_canyon, match_unassigned_by_name,
                                  promote_unassigned_parcels, breakout_ssd_subdivisions,
                                  create_roads_subdivision)
-from pipeline.exporters import export_overlay_layers, export_hierarchy
+from pipeline.exporters import export_overlay_layers, export_hierarchy, export_buildings_geojson
 
 # ──────────────────────────────────────────────────────────────────────────────────
 
@@ -117,7 +118,8 @@ def main():
     parcels, subdivisions, plats = promote_unassigned_parcels(parcels, subdivisions, plats, rules)
 
     # ── Build hierarchy: Building → Parcel + POI matching ──
-    buildings = join_buildings_to_parcels(buildings, parcels)
+    buildings = join_buildings_to_parcels(buildings, parcels, addresses)
+    buildings = join_housing_to_buildings(buildings)
     buildings = join_pois_to_buildings(buildings)
 
     # ── Compute subdivision categories ──
@@ -128,6 +130,9 @@ def main():
 
     # ── Export hierarchy ──
     export_hierarchy(subdivisions, plats, parcels, buildings, addresses)
+
+    # ── Export global buildings GeoJSON for 3D map ──
+    export_buildings_geojson(buildings)
 
 
 if __name__ == "__main__":

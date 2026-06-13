@@ -100,7 +100,7 @@ export function useHierarchy() {
   }, []);
 
   // ── Central navigation function ──
-  const navigateTo = useCallback(async (type, id, name) => {
+  const navigateTo = useCallback(async (type, id, name, parentId = null) => {
     const prev = selectionRef.current;
     const isSame = prev?.type === type && prev?.id === id;
 
@@ -113,8 +113,8 @@ export function useHierarchy() {
       return;
     }
 
-    // Resolve full ancestry from the hierarchy tree.
-    const ctx = resolveContext(hierarchy, type, id);
+    // Resolve full ancestry from the hierarchy tree, falling back to standard lookup if parentId context is not found
+    const ctx = resolveContext(hierarchy, type, id, parentId) || (parentId != null ? resolveContext(hierarchy, type, id) : null);
     if (!ctx) return; // item not found
 
     // Build selection object with full ancestry.
@@ -207,27 +207,27 @@ const ROOT_CRUMB = { type: 'city', id: 'root', name: 'Saratoga Springs' };
 
 // ── Hierarchy traversal ──
 // Returns { ids, crumbs, expandKeys } for a given (type, id) by walking the tree once.
-function resolveContext(hierarchy, type, id) {
+function resolveContext(hierarchy, type, id, parentId = null) {
   if (!hierarchy) return null;
 
   if (type === 'subdivision') {
-    const sub = (hierarchy.children || []).find(s => s.id === id);
+    const sub = (hierarchy.children || []).find(s => s.id == id);
     if (!sub) return null;
     return {
-      ids: { subdivisionId: id },
+      ids: { subdivisionId: sub.id },
       crumbs: [],
-      expandKeys: [`subdivision-${id}`],
+      expandKeys: [`subdivision-${sub.id}`],
     };
   }
 
   for (const sub of hierarchy.children || []) {
     if (type === 'plat') {
-      const plat = (sub.children || []).find(p => p.id === id);
+      const plat = (sub.children || []).find(p => p.id == id);
       if (plat) {
         return {
-          ids: { subdivisionId: sub.id, platId: id },
+          ids: { subdivisionId: sub.id, platId: plat.id },
           crumbs: [{ type: 'subdivision', id: sub.id, name: sub.name }],
-          expandKeys: [`subdivision-${sub.id}`, `plat-${id}`],
+          expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`],
         };
       }
       continue;
@@ -235,38 +235,39 @@ function resolveContext(hierarchy, type, id) {
 
     for (const plat of sub.children || []) {
       if (type === 'parcel') {
-        const parcel = (plat.children || []).find(p => p.id === id);
+        const parcel = (plat.children || []).find(p => p.id == id);
         if (parcel) {
           return {
-            ids: { subdivisionId: sub.id, platId: plat.id, parcelId: id },
+            ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id },
             crumbs: [
               { type: 'subdivision', id: sub.id, name: sub.name },
               { type: 'plat', id: plat.id, name: plat.name },
             ],
-            expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`, `parcel-${id}`],
+            expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`, `parcel-${parcel.id}`],
           };
         }
         continue;
       }
 
       for (const parcel of plat.children || []) {
+        if (parentId != null && parcel.id != parentId) continue;
         // Search for building or address among parcel's children
         for (const child of parcel.children || []) {
-          if (type === 'building' && child.type === 'building' && child.id === id) {
+          if (type === 'building' && child.type === 'building' && child.id == id) {
             return {
-              ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id, buildingId: id },
+              ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id, buildingId: child.id },
               crumbs: [
                 { type: 'subdivision', id: sub.id, name: sub.name },
                 { type: 'plat', id: plat.id, name: plat.name },
                 { type: 'parcel', id: parcel.id, name: parcel.name },
               ],
-              expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`, `parcel-${parcel.id}`, `building-${id}`],
+              expandKeys: [`subdivision-${sub.id}`, `plat-${plat.id}`, `parcel-${parcel.id}`, `building-${child.id}`],
             };
           }
 
           if (type === 'address') {
             // Address directly under parcel
-            if (child.type === 'address' && child.id === id) {
+            if (child.type === 'address' && child.id == id) {
               return {
                 ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id },
                 crumbs: [
@@ -279,7 +280,7 @@ function resolveContext(hierarchy, type, id) {
             }
             // Address under a building
             if (child.type === 'building') {
-              const addr = (child.children || []).find(a => a.id === id);
+              const addr = (child.children || []).find(a => a.id == id);
               if (addr) {
                 return {
                   ids: { subdivisionId: sub.id, platId: plat.id, parcelId: parcel.id, buildingId: child.id },

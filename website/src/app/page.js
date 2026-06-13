@@ -43,7 +43,6 @@ export default function HomePage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [hiddenSubdivisionIds, setHiddenSubdivisionIds] = useState(new Set());
-  const [hiddenCategories, setHiddenCategories] = useState(new Set());
 
   const toggleSubdivisionVisibility = useCallback((subdivisionId) => {
     setHiddenSubdivisionIds((prev) => {
@@ -58,16 +57,26 @@ export default function HomePage() {
   }, []);
 
   const toggleCategoryVisibility = useCallback((categoryName) => {
-    setHiddenCategories((prev) => {
+    if (!hierarchy || !hierarchy.children) return;
+    const categorySubIds = hierarchy.children
+      .filter(c => (c.category || 'Other') === categoryName)
+      .map(c => c.id);
+
+    if (categorySubIds.length === 0) return;
+
+    setHiddenSubdivisionIds((prev) => {
       const next = new Set(prev);
-      if (next.has(categoryName)) {
-        next.delete(categoryName);
+      const allHidden = categorySubIds.every(id => next.has(id));
+      if (allHidden) {
+        // Show all
+        categorySubIds.forEach(id => next.delete(id));
       } else {
-        next.add(categoryName);
+        // Hide all
+        categorySubIds.forEach(id => next.add(id));
       }
       return next;
     });
-  }, []);
+  }, [hierarchy]);
 
   // ── Escape key listener: go back a layer in hierarchy ──
   useEffect(() => {
@@ -146,7 +155,6 @@ export default function HomePage() {
             onNavigate={navigateTo}
             hiddenSubdivisionIds={hiddenSubdivisionIds}
             onToggleVisibility={toggleSubdivisionVisibility}
-            hiddenCategories={hiddenCategories}
             onToggleCategoryVisibility={toggleCategoryVisibility}
           />
           <DetailPanel
@@ -170,7 +178,6 @@ export default function HomePage() {
           selection={selection}
           onNavigate={navigateTo}
           hiddenSubdivisionIds={hiddenSubdivisionIds}
-          hiddenCategories={hiddenCategories}
         />
 
         {/* Tile loading indicator */}

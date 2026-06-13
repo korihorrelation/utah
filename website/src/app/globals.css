@@ -260,7 +260,8 @@ html, body {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-primary);
-  white-space: nowrap;
+  white-space: pre-line;
+  text-align: center;
   box-shadow: var(--shadow-md);
   font-family: 'Inter', sans-serif;
 }

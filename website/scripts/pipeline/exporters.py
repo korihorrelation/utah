@@ -11,8 +11,8 @@ import json
 import pandas as pd
 from shapely.geometry import mapping
 
-from .utils import safe_value, round_coords, gdf_to_features, write_json
-from .config import OUTPUT_DIR, BUILDING_CLASS_LABELS
+from .utils import safe_value, round_coords, gdf_to_features, write_json, clean_address
+from .config import OUTPUT_DIR, BUILDING_CLASS_LABELS, SIMPLIFY_BUILDING, COORD_PRECISION
 
 
 def export_overlay_layers(city_boundary, subdivisions, roads, paths, addresses):
@@ -80,9 +80,9 @@ def export_overlay_layers(city_boundary, subdivisions, roads, paths, addresses):
 def _build_parcel_node(p_idx, p_row, addresses, buildings):
     """Build a hierarchy tree node for a single parcel, including buildings and addresses."""
     parcel_id = safe_value(p_row.get("PARCELID"))
-    parcel_addr = safe_value(p_row.get("SITE_FULL_"))
+    parcel_addr = clean_address(safe_value(p_row.get("SITE_FULL_")))
     p_addresses = addresses[addresses["_parcel_idx"] == p_idx]
-    p_buildings = buildings[buildings["_parcel_idx"] == p_idx]
+    p_buildings = buildings[buildings["_parcel_indices"].apply(lambda lst: p_idx in lst if lst is not None else False)]
 
     parcel_node = {
         "id": parcel_id,
@@ -98,7 +98,7 @@ def _build_parcel_node(p_idx, p_row, addresses, buildings):
         bldg_cls = safe_value(b_row.get("BUILDINGCL")) or 0
         bldg_cls_int = int(bldg_cls) if bldg_cls else 0
         bldg_label = BUILDING_CLASS_LABELS.get(bldg_cls_int, "Building")
-        bldg_addr = safe_value(b_row.get("FULLADDRES"))
+        bldg_addr = clean_address(safe_value(b_row.get("_parcel_address")) or safe_value(b_row.get("FULLADDRES")))
         bldg_name_raw = safe_value(b_row.get("NAME"))
         bldg_name = bldg_name_raw or bldg_addr or bldg_label
         bldg_id = safe_value(b_row.get("GLOBALID"))
@@ -117,7 +117,7 @@ def _build_parcel_node(p_idx, p_row, addresses, buildings):
                 for _, a_row in bldg_addrs.iterrows():
                     building_node["children"].append({
                         "id": safe_value(a_row.get("UTAddPtID")),
-                        "name": safe_value(a_row.get("FullAdd")) or "Unknown Address",
+                        "name": clean_address(safe_value(a_row.get("FullAdd"))) or "Unknown Address",
                         "type": "address",
                     })
 
@@ -135,7 +135,7 @@ def _build_parcel_node(p_idx, p_row, addresses, buildings):
     for _, a_row in unassigned_addrs.iterrows():
         parcel_node["children"].append({
             "id": safe_value(a_row.get("UTAddPtID")),
-            "name": safe_value(a_row.get("FullAdd")) or "Unknown Address",
+            "name": clean_address(safe_value(a_row.get("FullAdd"))) or "Unknown Address",
             "type": "address",
         })
 
@@ -166,7 +166,7 @@ def _build_tile_features(plat_parcels, plat_addresses, plat_oid, plat_name,
         p_geom = round_coords(p_geom)
         p_props = {
             "id": safe_value(p_row.get("PARCELID")),
-            "address": safe_value(p_row.get("SITE_FULL_")),
+            "address": clean_address(safe_value(p_row.get("SITE_FULL_"))),
             "owner": safe_value(p_row.get("OWNER_NAME")),
             "platId": plat_oid,
             "landUse": safe_value(p_row.get("landUse")),
@@ -177,7 +177,7 @@ def _build_tile_features(plat_parcels, plat_addresses, plat_oid, plat_name,
         tile_parcel_features.append({"type": "Feature", "properties": p_props, "geometry": p_geom})
 
         # Buildings for this parcel
-        p_buildings = buildings[buildings["_parcel_idx"] == p_idx]
+        p_buildings = buildings[buildings["_parcel_indices"].apply(lambda lst: p_idx in lst if lst is not None else False)]
         for _, b_row in p_buildings.iterrows():
             b_geom = mapping(b_row.geometry)
             b_geom = round_coords(b_geom)
@@ -185,10 +185,11 @@ def _build_tile_features(plat_parcels, plat_addresses, plat_oid, plat_name,
             b_props = {
                 "id": safe_value(b_row.get("GLOBALID")),
                 "name": safe_value(b_row.get("NAME")),
-                "address": safe_value(b_row.get("FULLADDRES")),
+                "address": clean_address(safe_value(b_row.get("_parcel_address")) or safe_value(b_row.get("FULLADDRES"))),
                 "class": bldg_cls,
                 "classLabel": BUILDING_CLASS_LABELS.get(bldg_cls, "Building"),
                 "height": safe_value(b_row.get("_height")),
+                "housingLabel": safe_value(b_row.get("_hui_label")),
                 "yearBuilt": safe_value(b_row.get("YEAR_BUILT")),
                 "parcelId": safe_value(p_row.get("PARCELID")),
                 "platId": plat_oid,
@@ -202,7 +203,7 @@ def _build_tile_features(plat_parcels, plat_addresses, plat_oid, plat_name,
         a_geom = round_coords(a_geom)
         a_props = {
             "id": safe_value(a_row.get("UTAddPtID")),
-            "fullAddress": safe_value(a_row.get("FullAdd")),
+            "fullAddress": clean_address(safe_value(a_row.get("FullAdd"))),
             "parcelId": safe_value(a_row.get("ParcelID")),
         }
         if is_assigned:
@@ -437,3 +438,44 @@ def _sort_hierarchy(hierarchy_tree, subdivisions, plats, parcels):
             ))
 
     sort_node(hierarchy_tree)
+
+
+def export_buildings_geojson(buildings):
+    """Export all buildings as a single GeoJSON file for the 3D map layer.
+    
+    Properties include: height, class, name, housingLabel, address.
+    Only height and class are always present; the rest are conditional.
+    """
+    print("\nExporting buildings.geojson...")
+    features = []
+    for _, b_row in buildings.iterrows():
+        geom = b_row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        geom = geom.simplify(SIMPLIFY_BUILDING, preserve_topology=True)
+        geom_dict = mapping(geom)
+        geom_dict = round_coords(geom_dict)
+
+        bldg_cls = int(safe_value(b_row.get("BUILDINGCL")) or 0)
+        props = {
+            "id": safe_value(b_row.get("GLOBALID")),
+            "height": safe_value(b_row.get("_height")) or 8,
+            "class": bldg_cls,
+        }
+        name = safe_value(b_row.get("NAME"))
+        if name:
+            props["name"] = name
+        hui_label = safe_value(b_row.get("_hui_label"))
+        if hui_label:
+            props["housingLabel"] = hui_label
+        addr = clean_address(safe_value(b_row.get("_parcel_address")) or safe_value(b_row.get("FULLADDRES")))
+        if addr:
+            props["address"] = addr
+
+        features.append({"type": "Feature", "properties": props, "geometry": geom_dict})
+
+    write_json(
+        {"type": "FeatureCollection", "features": features},
+        os.path.join(OUTPUT_DIR, "buildings.geojson")
+    )
+    print(f"  Exported {len(features)} buildings")
